@@ -1,0 +1,23 @@
+universe: [BTC-USD, ETH-USD, SOL-USD, SPY, QQQ]
+timeframe: 1h
+backtest_start: "2022-01-01"
+max_position_pct: 0.02
+max_drawdown_kill: 0.10
+signal_confidence_threshold: 0.60
+paper_mode: true
+seed: 42
+
+# Risk model defaults
+initial_capital: 100000
+commission_rate: 0.001
+slippage_rate: 0.0005
+max_concurrent_positions: 5
+risk_free_rate: 0.05
+
+# Strategy parameters
+stop_atr_mult: 1.5
+take_profit_atr_mult: 2.5
+max_holding_bars: 48
+
+# Paper trader poll interval (seconds)
+poll_interval: 60

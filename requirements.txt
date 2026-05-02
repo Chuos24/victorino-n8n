@@ -1,0 +1,13 @@
+yfinance
+ccxt
+lightgbm
+torch
+pandas
+numpy
+ta
+scikit-learn
+rich
+pyyaml
+pytest
+pyarrow
+plyer

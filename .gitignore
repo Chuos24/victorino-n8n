@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Project data / runtime artifacts
+quant_trader/data/cache/
+quant_trader/backtest/results/*.json
+quant_trader/execution/portfolio_state.json
+quant_trader/execution/trade_log.csv
+quant_trader/execution/alerts.log
+*.parquet
+
+# Logs
+*.log
