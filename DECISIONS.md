@@ -141,6 +141,29 @@ intraday body plus a 5 bps absolute floor. The OHLC is still derived from
 real daily closes, just with a small modeled intraday range so bars
 aren't degenerate.
 
+### Paper trader adjustments
+
+- `TraderConfig.train_days` lifted from 365 → 1460 and a new
+  `step_lookback_days = 540` field replaces the hard-coded 120-day window
+  in `step()`. The original numbers were sized for hourly data; on daily
+  bars they were not enough for the 200-row feature warmup, so SPY in
+  particular only got 82 training rows.
+- `TraderConfig.timeframe` default changed from `1h` → `1d` and
+  `max_holding_bars` default changed from `48` → `10` to match the new
+  resolution.
+- Removed the line in `warmup()` that pre-seeded `last_seen_bar` to the
+  most recent bar. With it set, the very first `step()` always treated
+  the latest bar as already-processed and produced no signals — a fresh
+  startup should evaluate the current bar instead.
+- Added a `--once` CLI flag (`python main.py --mode paper --once`) that
+  runs warmup + a single `step()` and prints the signals/positions
+  generated. Useful for non-blocking smoke tests; `--mode paper` without
+  the flag still starts the long-running poll loop.
+
+On the first one-shot run the loop produced **real signals** from real
+prices: ETH-USD long @ \$2256.61 (conf 0.69) and SOL-USD long @ \$82.98
+(conf 0.66), with two positions opened against the live cache.
+
 ### Backtest metrics on real data
 
 After step 2 with the unmodified default strategy parameters:
