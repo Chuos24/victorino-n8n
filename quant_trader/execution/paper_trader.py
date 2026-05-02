@@ -42,7 +42,7 @@ TRADE_LOG_FIELDS = [
 @dataclass
 class TraderConfig:
     universe: List[str]
-    timeframe: str = "1h"
+    timeframe: str = "1d"
     poll_interval: int = 60
     initial_capital: float = 100_000
     commission_rate: float = 0.001
@@ -53,8 +53,11 @@ class TraderConfig:
     confidence_threshold: float = 0.6
     stop_atr_mult: float = 1.5
     take_profit_atr_mult: float = 2.5
-    max_holding_bars: int = 48
-    train_days: int = 365
+    max_holding_bars: int = 10
+    # Daily timeframe needs a long history: feature engine warmup is ~200
+    # bars, models want at least 250 training rows on top of that.
+    train_days: int = 1460
+    step_lookback_days: int = 540
     seed: int = 42
 
 
@@ -170,8 +173,10 @@ class PaperTrader:
                     seed=self.config.seed,
                 ).fit(df, symbol=sym)
                 self.models[sym] = model
-                if not df.empty:
-                    self.last_seen_bar[sym] = df.index[-1]
+                # Intentionally don't seed last_seen_bar here: we want the
+                # first step() after warmup to score the latest bar as if
+                # it were new, so the loop emits at least one signal even
+                # when no fresh bar has printed since startup.
                 self.alerter.signal(f"Model trained for {sym} ({len(df)} bars)")
             except Exception as e:
                 self.alerter.error(f"Training failed for {sym}: {e}")
@@ -180,7 +185,7 @@ class PaperTrader:
     def step(self) -> None:
         """Single iteration: poll bars, score, decide, log."""
         end = datetime.now(timezone.utc)
-        start = end - timedelta(days=120)
+        start = end - timedelta(days=self.config.step_lookback_days)
         mark: Dict[str, float] = {}
 
         for sym in self.config.universe:
