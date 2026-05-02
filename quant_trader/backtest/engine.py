@@ -31,6 +31,8 @@ class Trade:
     reason: str
     entry_confidence: float = 0.0
     entry_regime_slope: float = 0.0
+    entry_atr_pct: float = 0.0
+    entry_agreement_delta: float = 0.0
     bars_held: int = 0
 
 
@@ -54,6 +56,9 @@ class Backtester:
         regime_filter: bool = False,
         regime_slope_threshold: float = 0.0,
         long_only: bool = False,
+        atr_pct_low: float = 0.0,
+        atr_pct_high: float = 1.0,
+        min_agreement_delta: float = 0.0,
     ):
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
@@ -70,6 +75,9 @@ class Backtester:
         self.regime_filter = regime_filter
         self.regime_slope_threshold = regime_slope_threshold
         self.long_only = long_only
+        self.atr_pct_low = atr_pct_low
+        self.atr_pct_high = atr_pct_high
+        self.min_agreement_delta = min_agreement_delta
 
         # Per-open-position metadata so closes can fill entry_time / confidence
         # without scanning history.
@@ -84,6 +92,7 @@ class Backtester:
         self.sizer = KellyPositionSizer(max_position_pct=max_position_pct)
 
         self.equity_curve: list[tuple[pd.Timestamp, float]] = []
+        self.invested_curve: list[tuple[pd.Timestamp, int]] = []
         self.trades: list[Trade] = []
         self.signals: list[SignalResult] = []
 
@@ -154,6 +163,9 @@ class Backtester:
                 regime_filter=self.regime_filter,
                 regime_slope_threshold=self.regime_slope_threshold,
                 long_only=self.long_only,
+                atr_pct_low=self.atr_pct_low,
+                atr_pct_high=self.atr_pct_high,
+                min_agreement_delta=self.min_agreement_delta,
             )
             for sym in data
         }
@@ -173,6 +185,7 @@ class Backtester:
             # Mark-to-market and equity update.
             equity = self.risk.update_equity(mark)
             self.equity_curve.append((ts, equity))
+            self.invested_curve.append((ts, len(self.risk.state.positions)))
 
             for sym, feat_df in feature_frames.items():
                 if ts not in feat_df.index:
@@ -181,6 +194,8 @@ class Backtester:
                 price = float(row["close"])
                 atr = float(row.get("atr_14", 0.0))
                 regime_slope = float(row.get("ema_200_slope", 0.0))
+                atr_pct_raw = row.get("atr_pct_252", float("nan"))
+                atr_pct = float(atr_pct_raw) if pd.notna(atr_pct_raw) else None
                 bar_counters[sym] += 1
                 bar_idx = bar_counters[sym]
 
@@ -201,7 +216,12 @@ class Backtester:
 
                 strat = strategies[sym]
                 decision = strat.on_bar(
-                    signal, bar_idx, price, atr, regime_slope=regime_slope
+                    signal,
+                    bar_idx,
+                    price,
+                    atr,
+                    regime_slope=regime_slope,
+                    atr_pct=atr_pct,
                 )
 
                 if decision.action == StrategyAction.CLOSE and strat.position:
@@ -252,6 +272,8 @@ class Backtester:
                         "entry_bar": bar_idx,
                         "entry_confidence": float(signal.confidence),
                         "entry_regime_slope": float(regime_slope),
+                        "entry_atr_pct": float(atr_pct) if atr_pct is not None else 0.0,
+                        "entry_agreement_delta": float(signal.agreement_delta),
                     }
 
         # Close any positions still open at end of test.
@@ -306,6 +328,8 @@ class Backtester:
         entry_bar_meta = int(meta.get("entry_bar", risk_pos.entry_bar))
         entry_conf = meta.get("entry_confidence", 0.0)
         entry_slope = meta.get("entry_regime_slope", 0.0)
+        entry_atr_pct = meta.get("entry_atr_pct", 0.0)
+        entry_agreement = meta.get("entry_agreement_delta", 0.0)
         bars_held = max(0, int(close_bar) - entry_bar_meta)
         strategy.close_position()
         self.trades.append(
@@ -322,6 +346,8 @@ class Backtester:
                 reason=reason,
                 entry_confidence=float(entry_conf),
                 entry_regime_slope=float(entry_slope),
+                entry_atr_pct=float(entry_atr_pct),
+                entry_agreement_delta=float(entry_agreement),
                 bars_held=int(bars_held),
             )
         )
@@ -330,8 +356,12 @@ class Backtester:
         eq_df = pd.DataFrame(self.equity_curve, columns=["ts", "equity"]).set_index(
             "ts"
         )
+        inv_df = pd.DataFrame(
+            self.invested_curve, columns=["ts", "open_positions"]
+        ).set_index("ts")
         return {
             "equity_curve": eq_df,
+            "invested_curve": inv_df,
             "trades": [asdict(t) for t in self.trades],
             "final_equity": float(eq_df["equity"].iloc[-1]) if not eq_df.empty else self.initial_capital,
             "initial_capital": self.initial_capital,

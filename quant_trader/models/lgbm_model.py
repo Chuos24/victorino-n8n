@@ -27,6 +27,7 @@ FLAT = 0
 class LGBMPrediction:
     direction: int  # -1 / 0 / 1
     confidence: float  # max class probability in [0, 1]
+    margin: float = 0.0  # top class probability minus second-place probability
 
 
 class LGBMSignalModel:
@@ -105,13 +106,15 @@ class LGBMSignalModel:
 
     def predict_one(self, feature_row: pd.Series) -> LGBMPrediction:
         if self.model is None:
-            return LGBMPrediction(direction=FLAT, confidence=0.0)
+            return LGBMPrediction(direction=FLAT, confidence=0.0, margin=0.0)
         X = feature_row[self.feature_cols].to_frame().T.astype(float)
         proba = self.model.predict_proba(X)[0]
         idx = int(np.argmax(proba))
         cls = int(self.model.classes_[idx])
         conf = float(proba[idx])
-        return LGBMPrediction(direction=cls, confidence=conf)
+        sorted_proba = np.sort(proba)[::-1]
+        margin = float(sorted_proba[0] - sorted_proba[1]) if len(sorted_proba) >= 2 else float(sorted_proba[0])
+        return LGBMPrediction(direction=cls, confidence=conf, margin=margin)
 
     def predict_dataframe(self, feat_df: pd.DataFrame) -> pd.DataFrame:
         """Predict over a feature DataFrame and return direction + confidence."""

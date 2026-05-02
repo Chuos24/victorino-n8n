@@ -44,7 +44,13 @@ def compute_metrics(
             "total_return": 0.0,
             "cagr": 0.0,
             "sharpe": 0.0,
+            "sharpe_rf0": 0.0,
+            "sharpe_trade_weighted": 0.0,
+            "sharpe_trade_weighted_rf0": 0.0,
             "sortino": 0.0,
+            "sortino_trade_weighted": 0.0,
+            "invested_periods": 0,
+            "total_periods": 0,
             "max_drawdown": 0.0,
             "max_drawdown_duration_days": 0.0,
             "win_rate": 0.0,
@@ -82,6 +88,53 @@ def compute_metrics(
         else 0.0
     )
 
+    # Trade-weighted Sharpe: only count bars where the strategy was actually
+    # invested. The all-bars Sharpe applied the daily-equivalent risk-free
+    # rate to every calendar day including days with zero exposure, which
+    # subtracted ~0.02 % from a stream whose own daily mean is ~0.001 %.
+    # That made the Sharpe deeply negative even when realised returns were
+    # positive. The fix: compute mean / std / rf only over the subset of
+    # bars on which at least one position was open (or, as a fallback when
+    # the engine doesn't expose `invested_curve`, bars whose return is
+    # non-zero — the equity curve is flat by construction on uninvested
+    # daily bars).
+    invested_df = summary.get("invested_curve")
+    if invested_df is not None and not invested_df.empty:
+        invested_mask = (
+            invested_df["open_positions"].reindex(returns.index).fillna(0) > 0
+        )
+    else:
+        invested_mask = returns != 0
+    invested_returns = returns[invested_mask]
+    invested_std = invested_returns.std()
+    invested_excess = invested_returns - rf_per_period
+    sharpe_trade_weighted = (
+        float(invested_excess.mean() / invested_std * math.sqrt(ann))
+        if invested_std and not math.isnan(invested_std) and invested_std > 0
+        else 0.0
+    )
+    invested_downside = invested_returns[invested_returns < 0]
+    invested_dstd = invested_downside.std()
+    sortino_trade_weighted = (
+        float(invested_excess.mean() / invested_dstd * math.sqrt(ann))
+        if invested_dstd and not math.isnan(invested_dstd) and invested_dstd > 0
+        else 0.0
+    )
+
+    # rf=0 Sharpe — useful sanity check when the supplied risk-free rate
+    # dominates a barely-non-zero return stream.
+    sharpe_rf0 = (
+        float(returns.mean() / std * math.sqrt(ann))
+        if std and not math.isnan(std) and std > 0 else 0.0
+    )
+    sharpe_trade_weighted_rf0 = (
+        float(invested_returns.mean() / invested_std * math.sqrt(ann))
+        if invested_std and not math.isnan(invested_std) and invested_std > 0
+        else 0.0
+    )
+
+    invested_periods = int(invested_mask.sum())
+
     # Max drawdown.
     running_max = equity.cummax()
     drawdown = equity / running_max - 1.0
@@ -117,7 +170,13 @@ def compute_metrics(
         "total_return": float(total_return),
         "cagr": float(cagr),
         "sharpe": float(sharpe),
+        "sharpe_rf0": float(sharpe_rf0),
+        "sharpe_trade_weighted": float(sharpe_trade_weighted),
+        "sharpe_trade_weighted_rf0": float(sharpe_trade_weighted_rf0),
         "sortino": float(sortino),
+        "sortino_trade_weighted": float(sortino_trade_weighted),
+        "invested_periods": int(invested_periods),
+        "total_periods": int(len(returns)),
         "max_drawdown": float(max_dd),
         "max_drawdown_duration_days": float(dd_dur),
         "win_rate": float(win_rate),
@@ -140,8 +199,20 @@ def render_metrics_table(metrics: dict[str, Any]) -> None:
     fmt = {
         "total_return": ("Total Return", lambda v: f"{v:.2%}"),
         "cagr": ("CAGR", lambda v: f"{v:.2%}"),
-        "sharpe": ("Sharpe Ratio", lambda v: f"{v:.2f}"),
+        "sharpe": ("Sharpe (all bars)", lambda v: f"{v:.2f}"),
+        "sharpe_rf0": ("Sharpe (rf=0)", lambda v: f"{v:.2f}"),
+        "sharpe_trade_weighted": (
+            "Sharpe (trade-weighted)", lambda v: f"{v:.2f}"
+        ),
+        "sharpe_trade_weighted_rf0": (
+            "Sharpe (trade-weighted, rf=0)", lambda v: f"{v:.2f}"
+        ),
         "sortino": ("Sortino Ratio", lambda v: f"{v:.2f}"),
+        "sortino_trade_weighted": (
+            "Sortino (trade-weighted)", lambda v: f"{v:.2f}"
+        ),
+        "invested_periods": ("Invested Bars", lambda v: f"{v}"),
+        "total_periods": ("Total Bars", lambda v: f"{v}"),
         "max_drawdown": ("Max Drawdown", lambda v: f"{v:.2%}"),
         "max_drawdown_duration_days": (
             "Max DD Duration (days)",

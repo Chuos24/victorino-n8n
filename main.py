@@ -58,6 +58,9 @@ def cmd_backtest(settings: dict) -> int:
         regime_filter=settings.get("regime_filter", False),
         regime_slope_threshold=settings.get("regime_slope_threshold", 0.0),
         long_only=settings.get("long_only", False),
+        atr_pct_low=settings.get("atr_pct_low", 0.0),
+        atr_pct_high=settings.get("atr_pct_high", 1.0),
+        min_agreement_delta=settings.get("min_agreement_delta", 0.0),
     )
     summary = bt.run(data)
     metrics = compute_metrics(

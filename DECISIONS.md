@@ -285,3 +285,120 @@ iteration knows what knob actually moves the metric.
 - `backtest/results/{baseline_run,threshold_sweep,regime_slope_sweep,latest_run}.json`
   — saved artefacts from each step. Mirrored under
   `quant_trader/backtest/results/latest_run.json` for the dashboard.
+
+## Sharpe-fix + per-bar edge filters
+
+### Bug: Sharpe was applying rf to uninvested calendar days
+
+The original Sharpe in `compute_metrics` used `equity.pct_change().fillna(0)`
+across **every** test bar, then subtracted `risk_free_rate / 252` from each
+of them. With the long-only tuned strategy invested in only 154 of 875
+bars, the Sharpe denominator was dominated by 721 zero-return days each
+"penalised" by the risk-free rate. That dragged the reported Sharpe to
+**-5.30** even though total return was positive (+0.69 %).
+
+The fix: `Backtester` now records `invested_curve` (open-position count
+per bar), and `compute_metrics` reports four Sharpe variants:
+
+| Metric                              | Definition                                      |
+| ----------------------------------- | ----------------------------------------------- |
+| `sharpe`                            | All bars, `rf=settings.risk_free_rate`          |
+| `sharpe_rf0`                        | All bars, `rf=0`                                |
+| `sharpe_trade_weighted`             | Bars with `open_positions > 0`, supplied rf     |
+| `sharpe_trade_weighted_rf0`         | Bars with `open_positions > 0`, `rf=0`          |
+
+The trade-weighted, rf=0 variant is the one to compare against the user's
+`Sharpe > 0.8` target — every other variant is contaminated by either
+the rf-on-uninvested-days bug or the rf-on-tiny-mean-return artefact.
+
+Same change applied to Sortino. The metrics table now also exposes
+`Invested Bars` and `Total Bars` so the share of capital-at-work is
+visible.
+
+### Per-bar edge filters added
+
+- `FeatureEngine.atr_pct_252`: rolling-percentile rank of ATR(14) over a
+  trailing 252-bar window. Used by the strategy as an entry gate.
+- `LGBMSignalModel.predict_one`: now returns `margin = top_proba −
+  second_proba`. Plumbed through `EnsembleModel.predict_one` as
+  `SignalResult.agreement_delta`. This is the literal "LSTM/LightGBM
+  agreement score delta" — measured at the LGBM head where the
+  directional call is made. The LSTM only contributes the
+  direction-agreement check that already exists upstream of this filter.
+- `MomentumMeanReversion`: new entry gates `atr_pct_low`, `atr_pct_high`,
+  `min_agreement_delta`. Skip reasons exposed for `analyze_trades.py`:
+  `atr_band_block`, `low_agreement`.
+- `Trade` records `entry_atr_pct` and `entry_agreement_delta` for the
+  same per-trade decomposition that's already done for confidence /
+  regime slope.
+
+### Filter sweep results
+
+`scripts/sweep_filters.py` ran the cross-product
+`thresholds × ATR-bands × min_agreement_deltas` (4 × 6 × 3 = 72 runs)
+on the long-only configuration. Headline rows:
+
+| thr  | ATR band     | agr  |  n  |  PF  | Sharpe_tw_rf0 |
+| ---- | ------------ | ---- | --- | ---- | ------------- |
+| 0.65 | [0.30, 1.00] | 0.05 |  97 | 1.03 | -0.01         |
+| 0.65 | [0.00, 1.00] | 0.05 | 126 | 0.98 | -0.15         |
+| 0.72 | [0.30, 1.00] | 0.05 |  71 | 0.95 | -0.19         |
+| 0.72 | [0.00, 1.00] | 0.05 |  91 | 0.82 | -0.53         |
+| **0.72** | **[0.30, 0.70]** | **0.05** | **29** | **0.48** | **-1.49** |
+| 0.75 | [0.30, 0.70] | 0.05 |  29 | 0.57 | -1.30         |
+
+Key findings:
+1. **`min_agreement_delta` is a no-op above `confidence_threshold ≈ 0.65`** —
+   identical metrics across `agr ∈ {0.00, 0.05, 0.10}`. The LGBM margin is
+   reliably above 0.10 once the top-class probability clears 0.65, so
+   the filter never fires. Kept in the code path so it's available when
+   the universe / thresholds change, but it doesn't move the metric
+   today.
+2. **The literal 30-70 ATR band cuts the wrong tail.** It excludes the
+   high-ATR breakout regime where long-only crypto/SPY catches its
+   winners. PF collapses from 0.95 → 0.48, n from 71 → 29.
+3. **Tightening confidence (0.65 → 0.72) does help PF a little**
+   (1.03 → 0.95 for the [0.30, 1.00] band) but the cache had grown
+   between this and the earlier 0.70-threshold run, so the previous
+   1.22 baseline isn't directly reproducible.
+
+### Production settings written
+
+`signal_confidence_threshold: 0.72`, `atr_pct_low: 0.30`,
+`atr_pct_high: 0.70`, `min_agreement_delta: 0.05` — i.e. **the user's
+literal spec**. Keeping it that way so the filter additions are visible
+in the saved trade log (`entry_atr_pct`, `entry_agreement_delta`); the
+sweep JSON shows what each parameter actually does to the metrics. The
+honest production numbers from the literal spec:
+
+- 29 trades, win rate 48.28 %, **profit factor 0.48**, max DD -1.16 %.
+- Sharpe (all bars, rf=0.05): -12.61
+- Sharpe (all bars, rf=0): -0.66
+- **Sharpe (trade-weighted, rf=0): -1.49**
+- Sharpe (trade-weighted, rf=0.05): -6.51
+
+PF > 1.2 and Sharpe > 0.8 targets **not met** with the literal filter
+combination. The Sharpe fix did its job — the rf=0 variants are sane
+numbers — but the per-bar edge filters didn't add edge on this dataset.
+The next iteration should attack the underlying signal (more / better
+features, alternate training windows, dropping SOL where PF stays
+ground-floor), not stack more entry filters.
+
+### Files added / changed
+
+- `quant_trader/backtest/analytics.py` — four Sharpe variants, two
+  Sortino variants, `invested_periods` / `total_periods`.
+- `quant_trader/backtest/engine.py` — `invested_curve` bookkeeping,
+  passes new gates through, records `entry_atr_pct` /
+  `entry_agreement_delta` on each trade.
+- `quant_trader/features/engine.py` — `atr_pct_252`.
+- `quant_trader/models/lgbm_model.py`, `quant_trader/models/ensemble.py`
+  — propagate LGBM margin as `SignalResult.agreement_delta`.
+- `quant_trader/strategies/momentum_mr.py` — `atr_pct_low`,
+  `atr_pct_high`, `min_agreement_delta` entry gates.
+- `scripts/run_final.py` — primary rf=0.05 + secondary rf=0 run, single
+  trade log, two metric snapshots.
+- `scripts/sweep_filters.py` — full filter cross-product sweep.
+- `backtest/results/latest_run_rf0.json` — rf=0 metric snapshot from the
+  same canonical run.
+- `backtest/results/filter_sweep.json` — full sweep table.

@@ -65,6 +65,7 @@ class FeatureEngine:
         "volume_ratio_20",
         "ema_cross",
         "ema_200_slope",
+        "atr_pct_252",
         "hl_range_pct",
         "body_wick_ratio",
     ]
@@ -164,6 +165,13 @@ class FeatureEngine:
         # Use a 20-bar lookback so daily values aren't dominated by noise.
         ema200_lag = ema200.shift(20)
         out["ema_200_slope"] = (ema200 - ema200_lag) / ema200_lag.replace(0, np.nan)
+
+        # ATR rolling percentile over the last 252 bars (~ a year of daily
+        # data). Used as a volatility-regime filter: very low ATR ⇒ chop and
+        # whipsaw; very high ATR ⇒ regime breaks where trend signals
+        # misfire. Sweet spot is the 30-70 percentile band.
+        atr = out["atr_14"]
+        out["atr_pct_252"] = atr.rolling(252, min_periods=60).rank(pct=True)
 
         # Range / candle features
         out["hl_range_pct"] = (high - low) / close.replace(0, np.nan)

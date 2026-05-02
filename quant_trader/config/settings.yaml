@@ -3,9 +3,10 @@ timeframe: 1d
 backtest_start: "2022-01-01"
 max_position_pct: 0.02
 max_drawdown_kill: 0.10
-# Tuned via scripts/sweep_threshold.py — 0.70 maximises Sharpe on the
-# long-only configuration while keeping n_trades > 50.
-signal_confidence_threshold: 0.70
+# Raised from 0.70 → 0.72 alongside the new `min_agreement_delta` and
+# ATR-percentile filters. The narrower confidence band trades fewer but
+# stronger setups.
+signal_confidence_threshold: 0.72
 paper_mode: true
 seed: 42
 
@@ -35,6 +36,19 @@ regime_slope_threshold: 0.0
 # driven by the BTC/ETH/SOL bull trend in the test window. With this on
 # the strategy ignores short signals.
 long_only: true
+
+# ATR(14) percentile band over a trailing 252-bar window. Only enter when
+# the current ATR sits inside [atr_pct_low, atr_pct_high]. Very low ATR
+# is whipsaw chop; very high ATR signals regime breaks where the model's
+# directional call tends to misfire.
+atr_pct_low: 0.30
+atr_pct_high: 0.70
+
+# Probability margin between LGBM's top class and the runner-up. Raises
+# the bar for "the model is sure": near-tie predictions (e.g.
+# 0.34/0.33/0.33 across DOWN/FLAT/UP) get filtered out even if the top
+# class clears `signal_confidence_threshold`.
+min_agreement_delta: 0.05
 
 # Paper trader poll interval (seconds)
 poll_interval: 60

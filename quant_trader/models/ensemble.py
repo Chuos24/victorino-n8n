@@ -19,6 +19,10 @@ class SignalResult:
     confidence: float
     lgbm_score: float
     lstm_pred: float
+    # LGBM's probability margin (top class − runner-up). Used as the
+    # LSTM/LGBM "agreement score delta" — when it's near zero the model
+    # is split across classes and the directional call is fragile.
+    agreement_delta: float = 0.0
 
 
 class EnsembleModel:
@@ -69,4 +73,5 @@ class EnsembleModel:
             confidence=lgbm_pred.confidence,
             lgbm_score=float(lgbm_pred.confidence) * lgbm_pred.direction,
             lstm_pred=lstm_val,
+            agreement_delta=float(lgbm_pred.margin),
         )
