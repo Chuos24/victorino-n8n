@@ -81,3 +81,49 @@ This file tracks all decisions made during autonomous build of the AI Quant Trad
 - The `ta` package's PEP 517 wheel build requires modern setuptools.
   We upgrade pip/setuptools/wheel via `pip install --user --upgrade`
   before installing `ta`.
+
+## Live data integration (post-build)
+
+The runtime sandbox proxy turned out to enforce a strict allowlist that
+**blocks every financial API** the original fetcher relied on:
+
+- yfinance hosts (`query1.finance.yahoo.com`, `fc.yahoo.com`, etc.) → 403
+  `host_not_allowed`.
+- ccxt's Binance public endpoint (`api.binance.com`) → 403
+  `host_not_allowed`. All other major exchanges (Kraken, Coinbase, Bybit,
+  KuCoin, Gate, Bitfinex, OKX, etc.) are also blocked.
+- Stooq, Alpha Vantage, IEX, Tiingo, CoinGecko, Coinbase, Polygon — all
+  blocked.
+
+The only outbound hosts the proxy permits are PyPI / files.pythonhosted.org,
+GitHub (api / raw / codeload / objects), and AWS S3 / Google Cloud Storage.
+"Real network access" therefore means "real, but only via PyPI + GitHub +
+S3/GCS." Live tick streams are not reachable on this host.
+
+### Real-data sources (GitHub CSV mirror fallback)
+
+To still trade against **real market data** we added a third
+`_fetch_github_csv` fallback in `quant_trader/data/fetcher.py`. It runs
+after yfinance and ccxt fail and pulls real OHLCV / reference-price feeds
+that are mirrored on GitHub:
+
+| Symbol  | Source                                                       | Format |
+| ------- | ------------------------------------------------------------ | ------ |
+| BTC-USD | `coinmetrics/data csv/btc.csv` (`PriceUSD`)                  | daily ref price → synth O/H/L from prev close |
+| ETH-USD | `coinmetrics/data csv/eth.csv` (`PriceUSD`)                  | same |
+| SOL-USD | `coinmetrics/data csv/sol.csv` (`CapMrktEstUSD` ÷ implied supply derived from recent `ReferenceRate`) | same |
+| SPY     | `OStochastic/Daily-SPY-data-from-2000-2025/spy_data.csv`     | real daily OHLCV |
+| QQQ     | *(no source on the allowlist)*                               | empty |
+
+OHLC for crypto is synthesized as `open = prev_close`, `high = max(open,
+close)`, `low = min(open, close)` so all bar fields are real prices but
+without intraday detail.
+
+### Other adjustments
+
+- Switched `timeframe` from `1h` to `1d` in `quant_trader/config/settings.yaml`
+  — the GitHub mirrors only carry daily resolution.
+- Reduced `max_holding_bars` from `48` (hours) to `10` (days) to keep the
+  same ~2-week max holding window after the timeframe change.
+- The pipeline gracefully reports `0 bars` for QQQ; the backtester / paper
+  trader skip empty-data symbols.
