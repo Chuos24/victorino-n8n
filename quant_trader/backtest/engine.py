@@ -29,6 +29,9 @@ class Trade:
     pnl: float
     return_pct: float
     reason: str
+    entry_confidence: float = 0.0
+    entry_regime_slope: float = 0.0
+    bars_held: int = 0
 
 
 class Backtester:
@@ -48,6 +51,9 @@ class Backtester:
         max_holding_bars: int = 48,
         seed: int = 42,
         train_fraction: float = 0.5,
+        regime_filter: bool = False,
+        regime_slope_threshold: float = 0.0,
+        long_only: bool = False,
     ):
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
@@ -61,6 +67,13 @@ class Backtester:
         self.max_holding_bars = max_holding_bars
         self.seed = seed
         self.train_fraction = train_fraction
+        self.regime_filter = regime_filter
+        self.regime_slope_threshold = regime_slope_threshold
+        self.long_only = long_only
+
+        # Per-open-position metadata so closes can fill entry_time / confidence
+        # without scanning history.
+        self._open_meta: Dict[str, dict] = {}
 
         self.risk = RiskManager(
             initial_capital=initial_capital,
@@ -138,6 +151,9 @@ class Backtester:
                 take_profit_atr_mult=self.take_profit_atr_mult,
                 max_holding_bars=self.max_holding_bars,
                 confidence_threshold=self.confidence_threshold,
+                regime_filter=self.regime_filter,
+                regime_slope_threshold=self.regime_slope_threshold,
+                long_only=self.long_only,
             )
             for sym in data
         }
@@ -164,6 +180,7 @@ class Backtester:
                 row = feat_df.loc[ts]
                 price = float(row["close"])
                 atr = float(row.get("atr_14", 0.0))
+                regime_slope = float(row.get("ema_200_slope", 0.0))
                 bar_counters[sym] += 1
                 bar_idx = bar_counters[sym]
 
@@ -183,11 +200,13 @@ class Backtester:
                 self.signals.append(signal)
 
                 strat = strategies[sym]
-                decision = strat.on_bar(signal, bar_idx, price, atr)
+                decision = strat.on_bar(
+                    signal, bar_idx, price, atr, regime_slope=regime_slope
+                )
 
                 if decision.action == StrategyAction.CLOSE and strat.position:
                     self._close_trade(
-                        sym, ts, price, decision.reason, strat
+                        sym, ts, price, decision.reason, strat, bar_idx
                     )
                 elif decision.action in (
                     StrategyAction.OPEN_LONG,
@@ -228,7 +247,12 @@ class Backtester:
                         bar_index=bar_idx,
                         size=risk_decision.units,
                     )
-                    self._open_trade_log = (sym, ts, price, direction, risk_decision.units)
+                    self._open_meta[sym] = {
+                        "entry_ts": ts,
+                        "entry_bar": bar_idx,
+                        "entry_confidence": float(signal.confidence),
+                        "entry_regime_slope": float(regime_slope),
+                    }
 
         # Close any positions still open at end of test.
         if self.equity_curve:
@@ -237,7 +261,14 @@ class Backtester:
                 if strat.position is None:
                     continue
                 last_price = mark.get(sym) or strat.position.entry_price
-                self._close_trade(sym, last_ts, last_price, "eod_flatten", strat)
+                self._close_trade(
+                    sym,
+                    last_ts,
+                    last_price,
+                    "eod_flatten",
+                    strat,
+                    bar_counters.get(sym, 0),
+                )
             # Final equity refresh.
             self.risk.update_equity(mark)
             self.equity_curve[-1] = (last_ts, self.risk.state.equity)
@@ -251,6 +282,7 @@ class Backtester:
         price: float,
         reason: str,
         strategy: MomentumMeanReversion,
+        close_bar: int,
     ) -> None:
         risk_pos = self.risk.state.positions.get(symbol)
         if risk_pos is None:
@@ -258,7 +290,6 @@ class Backtester:
         entry_price = risk_pos.entry_price
         units = risk_pos.units
         direction = risk_pos.direction
-        entry_bar = risk_pos.entry_bar
         pos, pnl = self.risk.close_position(
             symbol=symbol,
             price=price,
@@ -270,12 +301,12 @@ class Backtester:
             if entry_price > 0
             else 0.0
         )
-        # Lookup entry timestamp from prior trades; we approximate with ts - bars.
-        entry_ts = ts  # Pre-fill — better is to thread through; keep simple.
-        # Try to recover from strategy
-        strat_pos = strategy.position
-        if strat_pos is not None:
-            entry_bar = strat_pos.entry_bar
+        meta = self._open_meta.pop(symbol, {})
+        entry_ts = meta.get("entry_ts", ts)
+        entry_bar_meta = int(meta.get("entry_bar", risk_pos.entry_bar))
+        entry_conf = meta.get("entry_confidence", 0.0)
+        entry_slope = meta.get("entry_regime_slope", 0.0)
+        bars_held = max(0, int(close_bar) - entry_bar_meta)
         strategy.close_position()
         self.trades.append(
             Trade(
@@ -289,6 +320,9 @@ class Backtester:
                 pnl=float(pnl),
                 return_pct=float(ret_pct),
                 reason=reason,
+                entry_confidence=float(entry_conf),
+                entry_regime_slope=float(entry_slope),
+                bars_held=int(bars_held),
             )
         )
 

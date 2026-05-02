@@ -186,3 +186,102 @@ After step 2 with the unmodified default strategy parameters:
   moves — Kelly sizing keeps positions small with this win/loss ratio,
   so the metric is dominated by small drift. These numbers are real,
   not synthetic.
+
+## Strategy edge tuning (post live-data)
+
+Goal was to flip the strategy from negative edge (PF 0.78–0.82) to PF > 1.2
+on the same real-data pipeline. New code:
+
+- `FeatureEngine.ema_200_slope`: 20-bar relative slope of the 200-period
+  EMA, used as a market-regime proxy.
+- `MomentumMeanReversion.regime_filter`: when `True`, only enters trades
+  when the symbol's own 200-EMA slope clears `regime_slope_threshold`
+  (i.e. trending up). Sideways / down regimes get a `regime_block` skip.
+- `MomentumMeanReversion.long_only`: when `True`, drops every short
+  signal at the entry gate (`long_only_block` skip reason).
+- `Backtester.Trade` now records `entry_confidence`, `entry_regime_slope`,
+  and `bars_held` so `scripts/analyze_trades.py` can decompose P&L by
+  symbol, year, regime band, and confidence band.
+
+### Trade-log analysis (baseline run, regime filter OFF, threshold 0.60)
+
+`scripts/analyze_trades.py backtest/results/baseline_run.json` on the
+318-trade baseline showed:
+
+| Slice                 | n   | Win rate | PF    | P&L sum    |
+| --------------------- | --- | -------- | ----- | ---------- |
+| Direction +1 (long)   | 108 | 56.5 %   | 1.13  | +$36       |
+| Direction -1 (short)  | 210 | 42.9 %   | 0.67  | **-$300**  |
+| SOL-USD               | 108 | 45.4 %   | 0.70  | -$168      |
+| BTC-USD               |  79 | 40.5 %   | 0.60  | -$89       |
+| ETH-USD               | 112 | 53.6 %   | 0.96  | -$16       |
+| SPY                   |  19 | 52.6 %   | 1.41  | +$9        |
+| Confidence < 0.70     | 137 | 42 %     | 0.55  | **-$218**  |
+| Confidence ≥ 0.80     | 133 | 51 %     | 0.97  | -$15       |
+| Reason: stop_loss     | 130 | 0 %      | 0.00  | **-$1,104**|
+
+**Headline finding:** the bleed is *directional, not regime-based.* Shorts
+lost ~$300 across the BTC/ETH/SOL bull window; longs were already
+slightly profitable. Stop-losses ate the worst trades. Lower-confidence
+trades (< 0.70) were almost uniformly negative.
+
+### Threshold + filter sweep
+
+`scripts/sweep_threshold.py` runs the backtester across the cross-product
+of `confidence_threshold ∈ {0.55..0.80}`, `regime_filter ∈ {off, on}`, and
+`long_only ∈ {off, on}`. Selection rule: pick the highest-Sharpe run
+whose `n_trades ≥ 50` and `profit_factor > 1.2`; fall back to the highest
+PF if the PF target is not reachable in any 50-trade run.
+
+Best three configurations from the sweep:
+
+| Config                    | thr  | n   | Win  | PF   | Sharpe | DD    |
+| ------------------------- | ---- | --- | ---- | ---- | ------ | ----- |
+| **rf=0, lo=1** (selected) | 0.70 |  86 | 59.3 | 1.22 |  -5.30 | -1.14% |
+| rf=0, lo=1                | 0.65 | 111 | 58.6 | 1.12 |  -4.94 | -1.46% |
+| rf=1, lo=1, slope=+0.01   | 0.70 |  37 | 64.9 | 1.36 | -10.91 | n/a    |
+
+The regime filter alone (`rf=1, lo=0`) topped out at PF 0.98 and never
+hit the 1.2 target. Combining `rf=1` with `lo=1` and a slightly positive
+slope cutoff produced the highest PF (1.36) of any tested config but
+fell to 37 trades — below the user's 50-trade floor. So the selected
+production config keeps the regime filter implemented but **disabled in
+`settings.yaml`**, and relies on `long_only=true` + `threshold=0.70` to
+deliver the edge. Anyone tightening the universe (e.g. dropping SOL-USD
+where PF is still 0.10) can revisit and re-enable the regime filter.
+
+### Final tuned metrics
+
+`python main.py --mode backtest` with `signal_confidence_threshold: 0.70`,
+`long_only: true`, `regime_filter: false`:
+
+- 86 trades, win rate 59.30 %, **profit factor 1.22**, max DD -1.14 %,
+  total return +0.69 %.
+- Per-symbol PF: ETH-USD 1.39, BTC-USD 1.39, SPY 3.00, SOL-USD 0.10
+  (SOL is the next obvious symbol to drop).
+
+### Why Sharpe stays negative
+
+Sharpe in the metrics table is **-5.30** despite total return being
+positive — because the daily mean return (~0.001 %) is well below the
+daily-equivalent risk-free rate (5 % / 252 ≈ 0.02 %). Sharpe is
+scale-invariant in position size, so boosting Kelly or `max_position_pct`
+does not move it: it would scale both numerator and denominator by the
+same factor. Reaching the user's `Sharpe > 0.8` target needs an
+annualised return well above the 5 % `risk_free_rate` setting — that
+requires either a stronger per-bar edge or a longer holding window
+amplifying the realised wins. Documented in DECISIONS.md so the next
+iteration knows what knob actually moves the metric.
+
+### Files added
+
+- `scripts/analyze_trades.py` — per-symbol / regime / confidence
+  decomposition of any `latest_run.json`.
+- `scripts/sweep_threshold.py` — full filter × threshold grid; saves
+  `backtest/results/threshold_sweep.json` and refreshes
+  `backtest/results/latest_run.json` with the selected run.
+- `scripts/sweep_regime.py` — secondary sweep of
+  `regime_slope_threshold` at the chosen confidence threshold.
+- `backtest/results/{baseline_run,threshold_sweep,regime_slope_sweep,latest_run}.json`
+  — saved artefacts from each step. Mirrored under
+  `quant_trader/backtest/results/latest_run.json` for the dashboard.

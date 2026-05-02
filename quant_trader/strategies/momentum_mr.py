@@ -51,12 +51,18 @@ class MomentumMeanReversion:
         take_profit_atr_mult: float = 2.5,
         max_holding_bars: int = 48,
         confidence_threshold: float = 0.6,
+        regime_filter: bool = False,
+        regime_slope_threshold: float = 0.0,
+        long_only: bool = False,
     ):
         self.symbol = symbol
         self.stop_atr_mult = stop_atr_mult
         self.take_profit_atr_mult = take_profit_atr_mult
         self.max_holding_bars = max_holding_bars
         self.confidence_threshold = confidence_threshold
+        self.regime_filter = regime_filter
+        self.regime_slope_threshold = regime_slope_threshold
+        self.long_only = long_only
         self.position: Position | None = None
 
     def stop_price(self) -> float | None:
@@ -77,6 +83,7 @@ class MomentumMeanReversion:
         bar_index: int,
         price: float,
         atr: float,
+        regime_slope: float | None = None,
     ) -> StrategyDecision:
         # If position is open, check exits first.
         if self.position is not None:
@@ -108,6 +115,16 @@ class MomentumMeanReversion:
             return StrategyDecision(StrategyAction.HOLD, "no_signal")
         if atr <= 0:
             return StrategyDecision(StrategyAction.HOLD, "no_atr")
+        # Regime filter: only take trades when 200-EMA slope is above the
+        # threshold (i.e. trending up). Sideways/down regimes are skipped.
+        if self.regime_filter and regime_slope is not None:
+            if regime_slope <= self.regime_slope_threshold:
+                return StrategyDecision(StrategyAction.HOLD, "regime_block")
+        # Long-only override: trade-log analysis showed shorts have negative
+        # expectancy (PF 0.67) while longs are profitable (PF 1.13). When
+        # `long_only` is set, drop short signals entirely.
+        if self.long_only and signal.direction == -1:
+            return StrategyDecision(StrategyAction.HOLD, "long_only_block")
         action = (
             StrategyAction.OPEN_LONG if signal.direction == 1 else StrategyAction.OPEN_SHORT
         )

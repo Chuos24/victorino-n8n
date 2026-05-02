@@ -55,6 +55,9 @@ def cmd_backtest(settings: dict) -> int:
         take_profit_atr_mult=settings.get("take_profit_atr_mult", 2.5),
         max_holding_bars=settings.get("max_holding_bars", 48),
         seed=settings.get("seed", 42),
+        regime_filter=settings.get("regime_filter", False),
+        regime_slope_threshold=settings.get("regime_slope_threshold", 0.0),
+        long_only=settings.get("long_only", False),
     )
     summary = bt.run(data)
     metrics = compute_metrics(
@@ -63,9 +66,15 @@ def cmd_backtest(settings: dict) -> int:
         timeframe=settings["timeframe"],
     )
     render_metrics_table(metrics)
-    out = Path(__file__).parent / "quant_trader" / "backtest" / "results" / "latest_run.json"
-    save_results(summary, metrics, out)
-    print(f"\nResults saved to {out}")
+    # Mirror the canonical results into both the package path (kept for
+    # backwards compatibility with the dashboard) and a top-level
+    # `backtest/results/latest_run.json` path so the trade log can be analysed
+    # without rooting around in the package tree.
+    pkg_out = Path(__file__).parent / "quant_trader" / "backtest" / "results" / "latest_run.json"
+    save_results(summary, metrics, pkg_out)
+    top_out = Path(__file__).parent / "backtest" / "results" / "latest_run.json"
+    save_results(summary, metrics, top_out)
+    print(f"\nResults saved to {pkg_out}\n              and {top_out}")
     return 0
 
 

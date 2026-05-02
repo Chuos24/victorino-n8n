@@ -64,6 +64,7 @@ class FeatureEngine:
         "atr_14",
         "volume_ratio_20",
         "ema_cross",
+        "ema_200_slope",
         "hl_range_pct",
         "body_wick_ratio",
     ]
@@ -157,6 +158,12 @@ class FeatureEngine:
         out["ema_cross"] = np.where(ema50 > ema200, 1.0, -1.0)
         # Mark warmup rows as NaN so they get dropped together with the rest.
         out.loc[ema200.isna(), "ema_cross"] = np.nan
+
+        # 200-period EMA slope, normalised by price. Positive => trending
+        # market, the regime where momentum trades have positive expectancy.
+        # Use a 20-bar lookback so daily values aren't dominated by noise.
+        ema200_lag = ema200.shift(20)
+        out["ema_200_slope"] = (ema200 - ema200_lag) / ema200_lag.replace(0, np.nan)
 
         # Range / candle features
         out["hl_range_pct"] = (high - low) / close.replace(0, np.nan)

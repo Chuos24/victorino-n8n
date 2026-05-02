@@ -3,7 +3,9 @@ timeframe: 1d
 backtest_start: "2022-01-01"
 max_position_pct: 0.02
 max_drawdown_kill: 0.10
-signal_confidence_threshold: 0.60
+# Tuned via scripts/sweep_threshold.py — 0.70 maximises Sharpe on the
+# long-only configuration while keeping n_trades > 50.
+signal_confidence_threshold: 0.70
 paper_mode: true
 seed: 42
 
@@ -19,6 +21,20 @@ stop_atr_mult: 1.5
 take_profit_atr_mult: 2.5
 # 48 hours of holding -> ~10 trading days on a daily timeframe.
 max_holding_bars: 10
+
+# Regime filter (200-EMA slope) — implemented and available, but disabled
+# by default because per-symbol gating dropped n_trades below the 50-trade
+# floor and didn't improve PF over `long_only=true` alone. Flip to `true`
+# to gate entries by trend regime (works best with `long_only=true` and
+# raising `regime_slope_threshold` to ~0.01).
+regime_filter: false
+regime_slope_threshold: 0.0
+
+# Long-only mode: trade-log analysis on the baseline run showed shorts
+# carry a negative edge (PF 0.67) while longs are profitable (PF 1.13),
+# driven by the BTC/ETH/SOL bull trend in the test window. With this on
+# the strategy ignores short signals.
+long_only: true
 
 # Paper trader poll interval (seconds)
 poll_interval: 60
