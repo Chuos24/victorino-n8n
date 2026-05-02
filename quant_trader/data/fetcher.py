@@ -204,6 +204,33 @@ class DataFetcher:
             logger.warning("ccxt fetch failed for %s: %s", symbol, e)
             return pd.DataFrame()
 
+    @staticmethod
+    def _synth_ohlc_from_close(
+        close: pd.Series, volume: pd.Series
+    ) -> pd.DataFrame:
+        """Build a synthetic OHLCV frame from a daily close series.
+
+        Real bars almost never have zero high-low range, so we widen the
+        bar by a small fraction of the close-to-close move (with a tiny
+        non-zero floor) — otherwise feature engineering's body/wick ratio
+        becomes NaN and every row gets dropped.
+        """
+        prev_close = close.shift(1).fillna(close)
+        body_low = pd.concat([prev_close, close], axis=1).min(axis=1)
+        body_high = pd.concat([prev_close, close], axis=1).max(axis=1)
+        # Widen by 25% of body, with a 0.05% absolute floor so flat days
+        # still get a non-degenerate bar.
+        wick = (body_high - body_low) * 0.25 + close.abs() * 0.0005
+        return pd.DataFrame(
+            {
+                "open": prev_close,
+                "high": body_high + wick,
+                "low": (body_low - wick).clip(lower=0.0),
+                "close": close,
+                "volume": volume,
+            }
+        )
+
     def _fetch_github_csv(
         self, symbol: str, timeframe: str, start: datetime, end: datetime
     ) -> pd.DataFrame:
@@ -254,18 +281,7 @@ class DataFetcher:
                 )
                 close = close.dropna()
                 volume = volume.reindex(close.index).fillna(0.0)
-                # Synthesize OHLC from real daily close: open is prior close,
-                # high/low are the (open, close) extremes of that day.
-                prev_close = close.shift(1).fillna(close)
-                ohlcv = pd.DataFrame(
-                    {
-                        "open": prev_close,
-                        "high": pd.concat([prev_close, close], axis=1).max(axis=1),
-                        "low": pd.concat([prev_close, close], axis=1).min(axis=1),
-                        "close": close,
-                        "volume": volume,
-                    }
-                )
+                ohlcv = self._synth_ohlc_from_close(close, volume)
                 return self._standardize(ohlcv)
 
             if kind == "coinmetrics_marketcap":
@@ -297,16 +313,7 @@ class DataFetcher:
                 # Prefer the real ReferenceRate where available (last few days).
                 close.update(ref_price.dropna())
                 volume = volume.reindex(close.index).fillna(0.0)
-                prev_close = close.shift(1).fillna(close)
-                ohlcv = pd.DataFrame(
-                    {
-                        "open": prev_close,
-                        "high": pd.concat([prev_close, close], axis=1).max(axis=1),
-                        "low": pd.concat([prev_close, close], axis=1).min(axis=1),
-                        "close": close,
-                        "volume": volume,
-                    }
-                )
+                ohlcv = self._synth_ohlc_from_close(close, volume)
                 return self._standardize(ohlcv)
 
             if kind == "ostochastic_ohlcv":

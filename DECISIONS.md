@@ -127,3 +127,27 @@ without intraday detail.
   same ~2-week max holding window after the timeframe change.
 - The pipeline gracefully reports `0 bars` for QQQ; the backtester / paper
   trader skip empty-data symbols.
+
+### Synthetic OHLC widening for daily-only sources
+
+Coin Metrics gives us a single daily reference price. Naïvely setting
+`open=prev_close`, `high=max(O, C)`, `low=min(O, C)` produces bars with a
+zero high-low wick on most days, which makes
+`FeatureEngine.body_wick_ratio` divide by zero and drop *every* feature
+row → the LightGBM trainer then errors with
+`index -1 is out of bounds for axis 0 with size 0`. We fix this with
+`DataFetcher._synth_ohlc_from_close`, which widens H/L by 25 % of the
+intraday body plus a 5 bps absolute floor. The OHLC is still derived from
+real daily closes, just with a small modeled intraday range so bars
+aren't degenerate.
+
+### Backtest metrics on real data
+
+After step 2 with the unmodified default strategy parameters:
+- 4 symbols traded (BTC-USD, ETH-USD, SOL-USD, SPY); QQQ skipped.
+- 285 trades over the 2022-01-01 → present window.
+- Win rate 41.05 %, profit factor 0.82, max DD -0.40 %, total return
+  -0.26 %. Sharpe is heavily negative because the equity curve barely
+  moves — Kelly sizing keeps positions small with this win/loss ratio,
+  so the metric is dominated by small drift. These numbers are real,
+  not synthetic.
