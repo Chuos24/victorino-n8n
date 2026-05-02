@@ -2,12 +2,16 @@
 
 Reads `portfolio_state.json` and `trade_log.csv` produced by the paper
 trader and renders a multi-panel rich.live view that refreshes every 60s.
+
+Can be run either as a module (``python -m quant_trader.dashboard.monitor``)
+or as a plain script (``python quant_trader/dashboard/monitor.py``).
 """
 
 from __future__ import annotations
 
 import csv
 import json
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +24,15 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from ..execution.paper_trader import STATE_PATH, TRADE_LOG_PATH
+# When run as a script the package isn't on sys.path yet — fix that up
+# so the relative import below resolves.
+if __package__ in (None, ""):
+    _root = Path(__file__).resolve().parents[2]
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from quant_trader.execution.paper_trader import STATE_PATH, TRADE_LOG_PATH
+else:
+    from ..execution.paper_trader import STATE_PATH, TRADE_LOG_PATH
 
 
 def _load_state() -> dict:

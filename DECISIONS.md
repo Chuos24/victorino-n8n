@@ -164,6 +164,18 @@ On the first one-shot run the loop produced **real signals** from real
 prices: ETH-USD long @ \$2256.61 (conf 0.69) and SOL-USD long @ \$82.98
 (conf 0.66), with two positions opened against the live cache.
 
+### Dashboard
+
+- The original dashboard could only be invoked as a module
+  (`python -m quant_trader.dashboard.monitor`). Added a
+  `dashboard/monitor.py` shim at the repo root so
+  `python dashboard/monitor.py` (with optional `--once`) also works, and
+  taught `quant_trader/dashboard/monitor.py` to bootstrap `sys.path` when
+  it is run as a script with `__package__` empty.
+- Verified panels render against the real portfolio state from step 4:
+  Portfolio (equity \$99,999.70), Risk (drawdown 0 %, kill switch off),
+  Recent Trades (ETH-USD and SOL-USD opens at the live cache prices).
+
 ### Backtest metrics on real data
 
 After step 2 with the unmodified default strategy parameters:
