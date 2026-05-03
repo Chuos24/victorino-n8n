@@ -1,0 +1,185 @@
+{
+  "results": [
+    {
+      "config": "phase12_baseline",
+      "label": "Phase-12 baseline (BTC/ETH/SPY, 1d)",
+      "universe": [
+        "BTC-USD",
+        "ETH-USD",
+        "SPY"
+      ],
+      "timeframe": "1d",
+      "bars_per_symbol": {
+        "BTC-USD": 1583,
+        "ETH-USD": 1583,
+        "SPY": 918
+      },
+      "n_trades": 41,
+      "profit_factor": 1.3678040243130312,
+      "win_rate": 0.5609756097560976,
+      "sharpe_tw_rf0": 0.6163677414805917,
+      "sharpe_tw_rfp": -4.06648425488509,
+      "max_drawdown": -0.007533396597347419,
+      "total_return": 0.005003820481996879,
+      "invested_periods": 230,
+      "total_periods": 876,
+      "per_symbol": {
+        "BTC-USD": {
+          "n": 10,
+          "pf": 1.682924371396225,
+          "pnl": 316.64890161970055
+        },
+        "ETH-USD": {
+          "n": 29,
+          "pf": 1.2355887037131148,
+          "pnl": 308.7648695445182
+        },
+        "SPY": {
+          "n": 2,
+          "pf": 2.3929103022994003,
+          "pnl": 36.921293960556525
+        }
+      }
+    },
+    {
+      "config": "a1_literal",
+      "label": "A1 literal: + QQQ + IWM (1d)",
+      "universe": [
+        "BTC-USD",
+        "ETH-USD",
+        "SPY",
+        "QQQ",
+        "IWM"
+      ],
+      "timeframe": "1d",
+      "bars_per_symbol": {
+        "BTC-USD": 1583,
+        "ETH-USD": 1583,
+        "SPY": 918,
+        "QQQ": 0,
+        "IWM": 0
+      },
+      "n_trades": 41,
+      "profit_factor": 1.3678040243130312,
+      "win_rate": 0.5609756097560976,
+      "sharpe_tw_rf0": 0.6163677414805917,
+      "sharpe_tw_rfp": -4.06648425488509,
+      "max_drawdown": -0.007533396597347419,
+      "total_return": 0.005003820481996879,
+      "invested_periods": 230,
+      "total_periods": 876,
+      "per_symbol": {
+        "BTC-USD": {
+          "n": 10,
+          "pf": 1.682924371396225,
+          "pnl": 316.64890161970055
+        },
+        "ETH-USD": {
+          "n": 29,
+          "pf": 1.2355887037131148,
+          "pnl": 308.7648695445182
+        },
+        "SPY": {
+          "n": 2,
+          "pf": 2.3929103022994003,
+          "pnl": 36.921293960556525
+        }
+      }
+    },
+    {
+      "config": "a1_substitute",
+      "label": "A1 substitute: + LTC/ADA/DOT/LINK (1d, Coin Metrics)",
+      "universe": [
+        "BTC-USD",
+        "ETH-USD",
+        "SPY",
+        "LTC-USD",
+        "ADA-USD",
+        "DOT-USD",
+        "LINK-USD"
+      ],
+      "timeframe": "1d",
+      "bars_per_symbol": {
+        "BTC-USD": 1583,
+        "ETH-USD": 1583,
+        "SPY": 918,
+        "LTC-USD": 1583,
+        "ADA-USD": 1583,
+        "DOT-USD": 1583,
+        "LINK-USD": 1583
+      },
+      "n_trades": 55,
+      "profit_factor": 2.141293192284905,
+      "win_rate": 0.6,
+      "sharpe_tw_rf0": 1.339210466340377,
+      "sharpe_tw_rfp": -1.1830055287280212,
+      "max_drawdown": -0.006870911629015097,
+      "total_return": 0.026216993364724495,
+      "invested_periods": 258,
+      "total_periods": 876,
+      "per_symbol": {
+        "BTC-USD": {
+          "n": 10,
+          "pf": 1.6671586443401873,
+          "pnl": 314.08324682548397
+        },
+        "ADA-USD": {
+          "n": 6,
+          "pf": 9.660337723437303,
+          "pnl": 1650.2974952876311
+        },
+        "ETH-USD": {
+          "n": 29,
+          "pf": 1.2324304294094999,
+          "pnl": 308.0952835861251
+        },
+        "DOT-USD": {
+          "n": 6,
+          "pf": 1.0536538708586296,
+          "pnl": 25.67266170509538
+        },
+        "LTC-USD": {
+          "n": 1,
+          "pf": Infinity,
+          "pnl": 380.71634997081037
+        },
+        "LINK-USD": {
+          "n": 1,
+          "pf": Infinity,
+          "pnl": 128.27852213816752
+        },
+        "SPY": {
+          "n": 2,
+          "pf": 2.386445071849716,
+          "pnl": 37.070730137782384
+        }
+      }
+    },
+    {
+      "config": "a2_4h",
+      "label": "A2 literal: drop 1d \u2192 4h bars (BTC/ETH/SPY)",
+      "universe": [
+        "BTC-USD",
+        "ETH-USD",
+        "SPY"
+      ],
+      "timeframe": "4h",
+      "bars_per_symbol": {
+        "BTC-USD": 0,
+        "ETH-USD": 0,
+        "SPY": 0
+      },
+      "n_trades": 0,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "sharpe_tw_rf0": 0.0,
+      "sharpe_tw_rfp": 0.0,
+      "max_drawdown": 0.0,
+      "total_return": 0.0,
+      "invested_periods": 0,
+      "total_periods": 0,
+      "per_symbol": {}
+    }
+  ],
+  "winner": "a1_substitute"
+}

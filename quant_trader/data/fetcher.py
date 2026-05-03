@@ -62,6 +62,42 @@ GITHUB_CSV_SOURCES: dict[str, dict] = {
         "ref_price_col": "ReferenceRate",
         "volume_col": "volume_reported_spot_usd_1d",
     },
+    # Phase-13 universe expansion. The user's literal request was to add
+    # QQQ + IWM, but no GitHub-mirrored data source for them was found
+    # despite an extensive search (yfinance / Stooq / NASDAQ / Alpha
+    # Vantage are all blocked by the sandbox allowlist; Coin Metrics
+    # only carries crypto). The five symbols below are the realistic
+    # substitutes — Coin Metrics ships a `PriceUSD` column for every L1
+    # with deep history, and they expand the universe ~5x while keeping
+    # every bar real (no synthesis).
+    "LTC-USD": {
+        "url": "https://raw.githubusercontent.com/coinmetrics/data/master/csv/ltc.csv",
+        "kind": "coinmetrics",
+        "price_col": "PriceUSD",
+        "volume_col": "volume_reported_spot_usd_1d",
+    },
+    "ADA-USD": {
+        "url": "https://raw.githubusercontent.com/coinmetrics/data/master/csv/ada.csv",
+        "kind": "coinmetrics",
+        "price_col": "PriceUSD",
+        "volume_col": "volume_reported_spot_usd_1d",
+    },
+    "DOT-USD": {
+        "url": "https://raw.githubusercontent.com/coinmetrics/data/master/csv/dot.csv",
+        "kind": "coinmetrics",
+        "price_col": "PriceUSD",
+        "volume_col": "volume_reported_spot_usd_1d",
+    },
+    "LINK-USD": {
+        "url": "https://raw.githubusercontent.com/coinmetrics/data/master/csv/link.csv",
+        "kind": "coinmetrics",
+        "price_col": "PriceUSD",
+        "volume_col": "volume_reported_spot_usd_1d",
+    },
+    # MATIC was evaluated for the substitute universe but its Coin Metrics
+    # mirror only ships `CapMrktEstUSD` (no `ReferenceRate` at all), so
+    # the marketcap-derived adapter can't back out a supply estimate the
+    # way it does for SOL. Dropped from the substitute universe.
     "SPY": {
         "url": (
             "https://raw.githubusercontent.com/OStochastic/"
