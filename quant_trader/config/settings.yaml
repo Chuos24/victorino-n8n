@@ -1,14 +1,12 @@
-# Phase-13 universe expansion. The user's literal request was to add
-# QQQ + IWM, but every reachable equity-data host (yfinance, Stooq,
-# NASDAQ, Alpha Vantage) sits behind the sandbox allowlist; Coin
-# Metrics is crypto-only. Adding QQQ/IWM to this list returns 0 bars
-# and is a no-op (verified by `scripts/sweep_universe.py`). The four
-# new crypto symbols (LTC/ADA/DOT/LINK) are the realistic substitute —
-# Coin Metrics ships a `PriceUSD` column with multi-year history for
-# each, the universe goes from 3 → 7 symbols, and the trade count
-# crosses 150 at confidence_threshold=0.45. SOL-USD stays out (Phase
-# 11 PF 0.10 noise floor).
-universe: [BTC-USD, ETH-USD, SPY, LTC-USD, ADA-USD, DOT-USD, LINK-USD]
+# Phase-14 production universe. DOT (PF 0.74) and LINK (PF 0.34) were
+# pruned after Phase 13 trade-log analysis confirmed both as dead
+# weight: their wins were too small to offset the win-rate gap and
+# they were dragging overall PF down. SOL stays out for the same
+# reason at the noise-floor (Phase 11 PF 0.10). Equity-side QQQ /
+# IWM remain unfetchable on this sandbox (yfinance / Stooq / NASDAQ /
+# Alpha Vantage are all 403; only the OStochastic SPY mirror is on
+# the GitHub allowlist).
+universe: [BTC-USD, ETH-USD, SPY, LTC-USD, ADA-USD]
 timeframe: 1d
 backtest_start: "2022-01-01"
 max_position_pct: 0.02

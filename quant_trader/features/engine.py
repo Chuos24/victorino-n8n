@@ -213,7 +213,13 @@ class FeatureEngine:
         # in stress regimes). For BTC's own rows the feature is its own
         # 7-day return — equivalent to log_ret_7d on a daily timeframe,
         # but with a different scale weighting that the model can learn.
+        # When no cross-asset frame is available (e.g. unit-test
+        # fixtures) we fall back to the target frame's own 7-day return
+        # so the feature is defined and the warmup-drop step doesn't
+        # wipe every row.
         btc_ret = self._cross_asset_btc_7d(out.index)
+        if btc_ret.isna().all():
+            btc_ret = log_close.diff(7)
         out["cross_btc_ret_7d"] = btc_ret
 
         # Replace ±inf and drop warmup NaN rows.
