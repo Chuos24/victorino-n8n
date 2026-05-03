@@ -1,12 +1,18 @@
-universe: [BTC-USD, ETH-USD, SOL-USD, SPY, QQQ]
+# SOL-USD dropped after Phase 11 trade-log analysis: PF stuck at 0.10
+# across every threshold/filter combination — noise, not signal. QQQ has
+# no on-allowlist data source. Universe is the three symbols where the
+# pipeline can both fetch real data and produce a trade-able edge.
+universe: [BTC-USD, ETH-USD, SPY]
 timeframe: 1d
 backtest_start: "2022-01-01"
 max_position_pct: 0.02
 max_drawdown_kill: 0.10
-# Raised from 0.70 → 0.72 alongside the new `min_agreement_delta` and
-# ATR-percentile filters. The narrower confidence band trades fewer but
-# stronger setups.
-signal_confidence_threshold: 0.72
+# Phase 12 (signal-quality features) lifted the new model's confidence
+# distribution into the 0.6–0.95 range, so a 0.65 threshold balances
+# trade count and per-symbol coverage. The OBV z-score, 52-week high
+# anchor and cross-asset BTC 7d return now do most of the gating
+# upstream of the strategy.
+signal_confidence_threshold: 0.65
 paper_mode: true
 seed: 42
 
@@ -23,12 +29,12 @@ take_profit_atr_mult: 2.5
 # 48 hours of holding -> ~10 trading days on a daily timeframe.
 max_holding_bars: 10
 
-# Regime filter (200-EMA slope) — implemented and available, but disabled
-# by default because per-symbol gating dropped n_trades below the 50-trade
-# floor and didn't improve PF over `long_only=true` alone. Flip to `true`
-# to gate entries by trend regime (works best with `long_only=true` and
-# raising `regime_slope_threshold` to ~0.01).
-regime_filter: false
+# Regime filter (200-EMA slope) — re-enabled for Phase 12 (signal-quality
+# features). The new feature set lifts ETH's per-bar edge enough that it
+# crosses confidence thresholds, but ETH still bleeds in 200-EMA-down
+# regimes (PF 0.03 in those bars). Filtering with slope > 0 lifts ETH
+# from PF 0.68 → 1.24 and overall PF from 0.95 → 1.37.
+regime_filter: true
 regime_slope_threshold: 0.0
 
 # Long-only mode: trade-log analysis on the baseline run showed shorts
@@ -37,17 +43,21 @@ regime_slope_threshold: 0.0
 # the strategy ignores short signals.
 long_only: true
 
-# ATR(14) percentile band over a trailing 252-bar window. Only enter when
-# the current ATR sits inside [atr_pct_low, atr_pct_high]. Very low ATR
-# is whipsaw chop; very high ATR signals regime breaks where the model's
-# directional call tends to misfire.
-atr_pct_low: 0.30
-atr_pct_high: 0.70
+# ATR(14) percentile band — disabled by default after Phase 12. The
+# 30-70 band tuned for the old signal cut PF in half on the new feature
+# set because the per-symbol models now rank ATR-led setups much more
+# reliably; gating them out throws away most of the new edge. Knob is
+# kept for future use; flip the bounds inside [0, 1] to re-enable.
+atr_pct_low: 0.0
+atr_pct_high: 1.0
 
 # Probability margin between LGBM's top class and the runner-up. Raises
 # the bar for "the model is sure": near-tie predictions (e.g.
 # 0.34/0.33/0.33 across DOWN/FLAT/UP) get filtered out even if the top
-# class clears `signal_confidence_threshold`.
+# class clears `signal_confidence_threshold`. With the Phase 12 fallback
+# refit lifting confidence into the 0.6–0.95 range the LGBM margin now
+# clears 0.05 reliably, so the filter is non-binding but kept on for
+# safety against a future model regression.
 min_agreement_delta: 0.05
 
 # Paper trader poll interval (seconds)

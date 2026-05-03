@@ -97,7 +97,9 @@ class Backtester:
         self.signals: list[SignalResult] = []
 
     def _train_models(
-        self, data: Dict[str, pd.DataFrame]
+        self,
+        data: Dict[str, pd.DataFrame],
+        cross_assets: Dict[str, pd.DataFrame] | None = None,
     ) -> Dict[str, EnsembleModel]:
         models: Dict[str, EnsembleModel] = {}
         for sym, df in data.items():
@@ -106,11 +108,20 @@ class Backtester:
                 continue
             split = max(1, int(len(df) * self.train_fraction))
             train = df.iloc[:split]
+            # Cross-asset frames are also sliced to the in-sample window so
+            # nothing leaks from the test period during training.
+            train_cross = None
+            if cross_assets is not None:
+                train_cross = {
+                    s: cdf.loc[: train.index[-1]]
+                    for s, cdf in cross_assets.items()
+                    if cdf is not None and not cdf.empty
+                }
             try:
                 model = EnsembleModel(
                     confidence_threshold=self.confidence_threshold,
                     seed=self.seed,
-                ).fit(train, symbol=sym)
+                ).fit(train, symbol=sym, cross_assets=train_cross)
                 models[sym] = model
             except Exception as e:
                 logger.warning("Failed to train ensemble for %s: %s", sym, e)
@@ -139,13 +150,17 @@ class Backtester:
 
     def run(self, data: Dict[str, pd.DataFrame]) -> dict:
         """Run a backtest across the given symbol -> OHLCV mapping."""
+        # Cross-asset context (BTC closes) is shared by every per-symbol
+        # FeatureEngine so cross-asset momentum is visible to all symbols.
+        cross_assets = {sym: df for sym, df in data.items() if df is not None and not df.empty}
+
         # 1. Train ensemble models on the in-sample slice.
-        models = self._train_models(data)
+        models = self._train_models(data, cross_assets=cross_assets)
         if not models:
             logger.warning("No models trained — backtest will be a no-op.")
 
         # 2. Pre-compute features for the *full* dataset for each symbol.
-        feat_engine = FeatureEngine()
+        feat_engine = FeatureEngine(cross_assets=cross_assets)
         feature_frames: Dict[str, pd.DataFrame] = {}
         for sym, df in data.items():
             if df is None or df.empty:

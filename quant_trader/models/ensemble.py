@@ -45,11 +45,17 @@ class EnsembleModel:
         self.lstm = LSTMRegressor(seed=seed)
         self._symbol: str | None = None
 
-    def fit(self, df: pd.DataFrame, symbol: str = "UNKNOWN") -> "EnsembleModel":
+    def fit(
+        self,
+        df: pd.DataFrame,
+        symbol: str = "UNKNOWN",
+        cross_assets: dict[str, pd.DataFrame] | None = None,
+    ) -> "EnsembleModel":
         self._symbol = symbol
-        self.lgbm.fit(df)
+        self._cross_assets = cross_assets or {}
+        self.lgbm.fit(df, symbol=symbol, cross_assets=self._cross_assets)
         try:
-            self.lstm.fit(df)
+            self.lstm.fit(df, cross_assets=self._cross_assets)
         except Exception:
             # If torch is missing the LSTM falls through to a tiny linear
             # fallback; if that also fails (e.g. very small datasets) just

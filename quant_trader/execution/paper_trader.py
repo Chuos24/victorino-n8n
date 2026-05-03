@@ -148,6 +148,18 @@ class PaperTrader:
         """Fetch training data and fit one ensemble per symbol."""
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=self.config.train_days)
+        # Pre-fetch every universe frame so cross-asset features (e.g.
+        # BTC 7d return) are available during model fits.
+        cross_assets: Dict[str, pd.DataFrame] = {}
+        for sym in self.config.universe:
+            try:
+                cross_assets[sym] = self.fetcher.get_bars(
+                    sym, self.config.timeframe, start=start, end=end
+                )
+            except Exception as e:
+                self.alerter.error(f"Cross-asset fetch failed for {sym}: {e}")
+                cross_assets[sym] = pd.DataFrame()
+
         for sym in self.config.universe:
             self.strategies.setdefault(
                 sym,
@@ -160,9 +172,7 @@ class PaperTrader:
                 ),
             )
             try:
-                df = self.fetcher.get_bars(
-                    sym, self.config.timeframe, start=start, end=end
-                )
+                df = cross_assets.get(sym, pd.DataFrame())
                 if df.empty or len(df) < 250:
                     self.alerter.warn(
                         f"Skip {sym}: insufficient training data ({len(df)} bars)"
@@ -171,8 +181,11 @@ class PaperTrader:
                 model = EnsembleModel(
                     confidence_threshold=self.config.confidence_threshold,
                     seed=self.config.seed,
-                ).fit(df, symbol=sym)
+                ).fit(df, symbol=sym, cross_assets=cross_assets)
                 self.models[sym] = model
+                # Stash so step() can rebuild features with the same
+                # cross-asset context used at training time.
+                self._cross_assets = cross_assets
                 # Intentionally don't seed last_seen_bar here: we want the
                 # first step() after warmup to score the latest bar as if
                 # it were new, so the loop emits at least one signal even
@@ -197,7 +210,8 @@ class PaperTrader:
             if df.empty:
                 continue
 
-            feat = self.feat_engine.transform(df)
+            cross = getattr(self, "_cross_assets", None) or {}
+            feat = FeatureEngine(cross_assets=cross).transform(df)
             if feat.empty:
                 continue
             latest_ts = feat.index[-1]

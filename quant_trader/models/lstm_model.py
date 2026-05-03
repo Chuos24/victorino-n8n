@@ -102,8 +102,12 @@ class LSTMRegressor:
             return np.empty((0, self.seq_len, len(cols))), np.empty((0,))
         return np.stack(xs).astype(np.float32), np.array(ys, dtype=np.float32)
 
-    def fit(self, df: pd.DataFrame) -> "LSTMRegressor":
-        feat = FeatureEngine().transform(df)
+    def fit(
+        self,
+        df: pd.DataFrame,
+        cross_assets: dict[str, pd.DataFrame] | None = None,
+    ) -> "LSTMRegressor":
+        feat = FeatureEngine(cross_assets=cross_assets).transform(df)
         if feat.empty or len(feat) < self.seq_len + 10:
             raise ValueError("Not enough data to train LSTM")
 

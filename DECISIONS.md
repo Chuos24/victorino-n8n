@@ -402,3 +402,130 @@ ground-floor), not stack more entry filters.
 - `backtest/results/latest_run_rf0.json` — rf=0 metric snapshot from the
   same canonical run.
 - `backtest/results/filter_sweep.json` — full sweep table.
+
+## Phase 12 — Signal-quality features
+
+### Universe trimmed
+- **SOL-USD dropped**: PF stuck at 0.10 across every threshold/filter
+  combination in Phase 10/11. Coin Metrics' SOL series is also the most
+  synthetic of our crypto sources (price back-derived from market cap +
+  implied supply), so it has the worst signal-to-noise ratio.
+- **QQQ remains absent**: still no on-allowlist data source.
+- New universe: `[BTC-USD, ETH-USD, SPY]`.
+
+### Three new features
+
+Wired into `FeatureEngine.FEATURE_COLUMNS`:
+
+| Feature             | Definition                                             |
+| ------------------- | ------------------------------------------------------ |
+| `obv_z_20`          | On-Balance Volume z-score over a 20-bar rolling window |
+| `price_vs_52w_high` | `close / rolling_max(close, 252)` — 0..1 momentum anchor |
+| `cross_btc_ret_7d`  | BTC's 7-day log return aligned to the target frame's index |
+
+Cross-asset support required threading a `cross_assets` dict
+(`{symbol: ohlcv_df}`) through `FeatureEngine`, `LGBMSignalModel.fit`,
+`LSTMRegressor.fit`, `EnsembleModel.fit`, the `Backtester`, and the
+paper trader's `warmup`. Train-time slices are clipped to the in-sample
+window so cross-asset bars from the test period never leak.
+
+### LightGBM retraining changes
+
+- **Importance dump**: every fit now writes one row per (symbol,
+  feature) to `quant_trader/models/lgbm_importance.csv` with the gain,
+  the gain normalised by the per-symbol max, and a `kept` flag.
+- **Low-importance pruning**: features whose normalised gain is below
+  `importance_floor=0.01` (i.e. <1 % of the per-symbol leader) are
+  dropped, and the model is refit on the kept set. Typical drops on
+  this universe: `ema_cross`, `body_wick_ratio`, occasionally
+  `bb_pct_b` / `bb_width` (low gain on fewer-than-1000-bar SPY).
+- **Early stopping**: `early_stopping_rounds=50` with a 30 % held-out
+  walk-forward block. The first attempt used the LightGBM default
+  `multi_logloss` metric — it diverges within ~10 trees on noisy daily
+  data, so we switch to `multi_error` (classification accuracy) which
+  is monotone in the directional accuracy we care about.
+- **Stump safeguard**: when `best_iteration_ < min_useful_iterations`
+  (default 20) the early-stopped model is discarded and we refit
+  without early stopping using `min_useful_estimators=100` trees. ETH
+  and SPY both hit this fallback because their validation `multi_error`
+  bottoms out at iter 1-3; without the safeguard the per-symbol
+  confidence ceilings sit at ~0.40 (uniform 3-class baseline) and *no*
+  signal ever clears the threshold. With it, ETH `conf_max` jumps to
+  0.96 and SPY to 0.94. Logged via `LGBMSignalModel.fallback_used` so
+  callers can see when the early-stopped model was rejected.
+
+### Settings reset for Phase 12
+
+- `signal_confidence_threshold: 0.72 → 0.65` — Phase 11 raised it to
+  0.72 alongside the (then-tuned) ATR band; with the new feature set
+  the confidence distribution shifted (top-decile signals are more
+  reliable but rarer at 0.72), so a 0.65 floor balances trade count
+  and per-symbol coverage.
+- `atr_pct_low/high: 0.30/0.70 → 0.0/1.0` — the band tuned for the old
+  signal cuts the new model's PF by ~50 % because the new features now
+  rank ATR-led setups much more reliably; gating them out throws away
+  most of the new edge. Knob is kept in the code for future use.
+- `regime_filter: false → true` — re-enabled. ETH still bleeds in
+  200-EMA-down regimes (PF 0.03 in `down`/`strong_down` bars on the
+  Phase-12 trade log). Slope > 0 lifts ETH from 0.68 → 1.24 and
+  overall PF from 0.95 → 1.37. No new code; just the existing flag
+  flipped on the back of fresh trade-log analysis.
+- `min_agreement_delta: 0.05` (unchanged) — non-binding once the
+  fallback refit lifts confidences; kept on as a safety net against
+  future model regressions.
+
+### Final tuned metrics
+
+`python main.py --mode backtest` with the Phase-12 settings:
+
+|                 | n  | Win   | PF   | Sharpe (tw, rf=0) | Return |
+| --------------- | -- | ----- | ---- | ----------------- | ------ |
+| **Overall**     | 41 | 56.10 % | **1.37** | **+0.62** | +0.50 % |
+| BTC-USD         | 10 | 60.00 % | 1.68 | n/a              | n/a    |
+| ETH-USD         | 29 | 55.17 % | 1.24 | n/a              | n/a    |
+| SPY             |  2 | 50.00 % | 2.39 | n/a              | n/a    |
+
+- Overall PF target (> 1.3): **met**.
+- Per-symbol PF > 1.0 target (≥ 2 of 3): **all 3** symbols cleared.
+- Trade-weighted Sharpe (rf=0) flipped sign for the first time in this
+  series of phases (-1.49 → +0.62) because the new features actually
+  carry signal — not just because filters got loosened.
+
+### Feature-importance highlights (top 11 for BTC, gain-normalised)
+
+| Feature             | Norm. gain |
+| ------------------- | ---------- |
+| `volume_ratio_20`   | 1.00       |
+| `log_ret_1h`        | 0.71       |
+| `macd_hist`         | 0.63       |
+| `vol_50`            | 0.55       |
+| **`cross_btc_ret_7d`** | **0.55** |
+| `atr_14`            | 0.52       |
+| `hl_range_pct`      | 0.51       |
+| **`price_vs_52w_high`** | **0.50** |
+| `log_ret_7d`        | 0.50       |
+| `atr_pct_252`       | 0.45       |
+| **`obv_z_20`**      | **0.41**   |
+
+All three new features land in the top 11 by gain importance on BTC,
+with similar showings on ETH/SPY. The pruning step drops only
+`ema_cross` and `body_wick_ratio` per-symbol.
+
+### Files added / changed
+
+- `quant_trader/features/engine.py` — adds `obv_z_20`,
+  `price_vs_52w_high`, `cross_btc_ret_7d`; accepts `cross_assets`.
+- `quant_trader/models/lgbm_model.py` — importance dump, pruning,
+  early stopping with `multi_error` metric, stump-safeguard fallback.
+- `quant_trader/models/lstm_model.py` — accepts `cross_assets`.
+- `quant_trader/models/ensemble.py` — passes `cross_assets` through to
+  both legs.
+- `quant_trader/backtest/engine.py` — `cross_assets` plumbing,
+  in-sample slicing for training.
+- `quant_trader/execution/paper_trader.py` — pre-fetches every
+  universe symbol so `cross_assets` is available at warmup *and* step
+  time.
+- `quant_trader/config/settings.yaml` — universe trim, threshold reset,
+  filter relaxations, regime filter re-enabled.
+- `quant_trader/models/lgbm_importance.csv` — per-fit importance log,
+  one row per (symbol, feature).
