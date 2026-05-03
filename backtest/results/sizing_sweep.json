@@ -1,0 +1,82 @@
+{
+  "config": {
+    "initial_capital": 1000.0,
+    "universe": [
+      "BTC-USD",
+      "ETH-USD",
+      "SPY",
+      "LTC-USD",
+      "ADA-USD"
+    ],
+    "timeframe": "1d",
+    "signal_confidence_threshold": 0.45,
+    "regime_filter": true,
+    "long_only": true,
+    "atr_pct_low": 0.0,
+    "atr_pct_high": 1.0,
+    "min_agreement_delta": 0.05,
+    "max_drawdown_kill": 0.1
+  },
+  "results": [
+    {
+      "max_position_pct": 0.05,
+      "initial_capital": 1000.0,
+      "n_trades": 136,
+      "win_rate": 0.5808823529411765,
+      "profit_factor": 1.7091713320491335,
+      "total_return": 0.1018707227256268,
+      "max_drawdown": -0.027786740978285707,
+      "max_drawdown_duration_days": 216.0,
+      "final_equity": 1101.8707227256268,
+      "sharpe_tw_rf0": 1.3036896004128047
+    },
+    {
+      "max_position_pct": 0.1,
+      "initial_capital": 1000.0,
+      "n_trades": 136,
+      "win_rate": 0.5808823529411765,
+      "profit_factor": 1.6738032975349648,
+      "total_return": 0.20824935138711287,
+      "max_drawdown": -0.05505560460244496,
+      "max_drawdown_duration_days": 216.0,
+      "final_equity": 1208.249351387113,
+      "sharpe_tw_rf0": 1.2972820937052674
+    },
+    {
+      "max_position_pct": 0.2,
+      "initial_capital": 1000.0,
+      "n_trades": 136,
+      "win_rate": 0.5808823529411765,
+      "profit_factor": 1.5568784732868008,
+      "total_return": 0.30742075194469254,
+      "max_drawdown": -0.09286824126801052,
+      "max_drawdown_duration_days": 422.0,
+      "final_equity": 1307.4207519446925,
+      "sharpe_tw_rf0": 1.13038867959132
+    },
+    {
+      "max_position_pct": 0.3,
+      "initial_capital": 1000.0,
+      "n_trades": 136,
+      "win_rate": 0.5808823529411765,
+      "profit_factor": 1.5344028368756968,
+      "total_return": 0.29733246698961624,
+      "max_drawdown": -0.09286824126801052,
+      "max_drawdown_duration_days": 422.0,
+      "final_equity": 1297.3324669896163,
+      "sharpe_tw_rf0": 1.088690911658524
+    },
+    {
+      "max_position_pct": 0.4,
+      "initial_capital": 1000.0,
+      "n_trades": 136,
+      "win_rate": 0.5808823529411765,
+      "profit_factor": 1.5370792502911437,
+      "total_return": 0.30097697512947286,
+      "max_drawdown": -0.09286824126801008,
+      "max_drawdown_duration_days": 422.0,
+      "final_equity": 1300.9769751294727,
+      "sharpe_tw_rf0": 1.094839759883867
+    }
+  ]
+}
