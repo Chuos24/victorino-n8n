@@ -267,6 +267,97 @@ class DataFetcher:
             }
         )
 
+    @staticmethod
+    def _synth_4h_from_daily(daily: pd.DataFrame) -> pd.DataFrame:
+        """Resample a daily OHLCV frame into 6 4h bars per day.
+
+        The mirrors only carry daily resolution, so this is purely
+        synthetic intraday structure — used by Phase-16 to test how the
+        existing daily-tuned signal behaves at 4x cadence. Each daily
+        bar is split into 6 sub-bars at 00/04/08/12/16/20 UTC; the
+        *day's* OHLC envelope is preserved exactly. The synthesis is
+        deterministic (no randomness) so re-runs are reproducible:
+
+        * `close[i]` linearly interpolates from `day_open` → `day_close`.
+        * `open[i] = close[i-1]` (price-continuous; first sub-bar opens
+          at `day_open`).
+        * The day's `high` lands on a single sub-bar (the third), and
+          the day's `low` on another (the fourth) — chosen by direction
+          so the wick reads naturally on up-days and down-days alike.
+        * Other sub-bars get a small wick = 5 % of the day's range as a
+          uniform floor so feature engine's body/wick ratio stays defined.
+        * Volume is uniformly spread (`day_volume / 6`) across all
+          sub-bars (`volumespread`). The 24-hour total reconstructs the
+          daily volume exactly.
+        """
+        if daily is None or daily.empty:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        d = daily.copy()
+        # 6 sub-bar offsets per day.
+        offsets = pd.to_timedelta([0, 4, 8, 12, 16, 20], unit="h")
+        rows: list[pd.DataFrame] = []
+        for ts, bar in d.iterrows():
+            day_open = float(bar["open"])
+            day_high = float(bar["high"])
+            day_low = float(bar["low"])
+            day_close = float(bar["close"])
+            day_vol = float(bar.get("volume", 0.0))
+            day_range = max(day_high - day_low, abs(day_close) * 0.0005)
+            wick_floor = day_range * 0.05
+
+            # Linear interpolation of close from day_open to day_close.
+            closes = [day_open + (day_close - day_open) * (i + 1) / 6 for i in range(6)]
+            opens = [day_open] + closes[:-1]
+
+            highs = []
+            lows = []
+            for i in range(6):
+                # Default narrow envelope around the linear path.
+                cb_high = max(opens[i], closes[i]) + wick_floor
+                cb_low = min(opens[i], closes[i]) - wick_floor
+                # Place the day's high on bar 2 of an up-day / bar 3 of a
+                # down-day; opposite for the day's low. This matches a
+                # rough "first half consolidates, second half resolves"
+                # template that lines up with how daily wicks are usually
+                # printed.
+                up_day = day_close >= day_open
+                hi_bar = 2 if up_day else 3
+                lo_bar = 3 if up_day else 2
+                if i == hi_bar:
+                    cb_high = max(cb_high, day_high)
+                if i == lo_bar:
+                    cb_low = min(cb_low, day_low)
+                # Make sure first / last sub-bars also bracket day_high /
+                # day_low when those would otherwise fall outside the
+                # envelope (e.g. a pure trending day).
+                cb_high = max(cb_high, opens[i], closes[i])
+                cb_low = min(cb_low, opens[i], closes[i])
+                cb_low = max(cb_low, 0.0)
+                highs.append(cb_high)
+                lows.append(cb_low)
+
+            sub_idx = ts + offsets
+            sub = pd.DataFrame(
+                {
+                    "open": opens,
+                    "high": highs,
+                    "low": lows,
+                    "close": closes,
+                    "volume": [day_vol / 6.0] * 6,
+                },
+                index=sub_idx,
+            )
+            rows.append(sub)
+        if not rows:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        out = pd.concat(rows).sort_index()
+        if not isinstance(out.index, pd.DatetimeIndex):
+            out.index = pd.to_datetime(out.index, utc=True)
+        elif out.index.tz is None:
+            out.index = out.index.tz_localize("UTC")
+        return out
+
     def _fetch_github_csv(
         self, symbol: str, timeframe: str, start: datetime, end: datetime
     ) -> pd.DataFrame:
@@ -280,6 +371,20 @@ class DataFetcher:
         cfg = GITHUB_CSV_SOURCES.get(symbol)
         if not cfg:
             return pd.DataFrame()
+        # `4h` is supported only on Coin Metrics crypto sources via the
+        # synthetic resampler — equity OHLCV mirrors don't carry intraday
+        # bars and the OStochastic SPY frame doesn't either. Phase-16
+        # uses this branch to study how a daily-tuned signal behaves at
+        # 4x cadence on real (daily-anchored) crypto prices.
+        if timeframe == "4h":
+            if cfg.get("kind") not in {"coinmetrics", "coinmetrics_marketcap"}:
+                return pd.DataFrame()
+            daily = self._fetch_github_csv(symbol, "1d", start, end)
+            if daily.empty:
+                return daily
+            return self._synth_4h_from_daily(daily).loc[
+                pd.Timestamp(start) : pd.Timestamp(end)
+            ]
         if timeframe not in {"1d", "1h"}:
             return pd.DataFrame()
 
