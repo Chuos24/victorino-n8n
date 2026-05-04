@@ -42,7 +42,7 @@ TRADE_LOG_FIELDS = [
 @dataclass
 class TraderConfig:
     universe: List[str]
-    timeframe: str = "1h"
+    timeframe: str = "1d"
     poll_interval: int = 60
     initial_capital: float = 100_000
     commission_rate: float = 0.001
@@ -53,8 +53,11 @@ class TraderConfig:
     confidence_threshold: float = 0.6
     stop_atr_mult: float = 1.5
     take_profit_atr_mult: float = 2.5
-    max_holding_bars: int = 48
-    train_days: int = 365
+    max_holding_bars: int = 10
+    # Daily timeframe needs a long history: feature engine warmup is ~200
+    # bars, models want at least 250 training rows on top of that.
+    train_days: int = 1460
+    step_lookback_days: int = 540
     seed: int = 42
 
 
@@ -145,6 +148,18 @@ class PaperTrader:
         """Fetch training data and fit one ensemble per symbol."""
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=self.config.train_days)
+        # Pre-fetch every universe frame so cross-asset features (e.g.
+        # BTC 7d return) are available during model fits.
+        cross_assets: Dict[str, pd.DataFrame] = {}
+        for sym in self.config.universe:
+            try:
+                cross_assets[sym] = self.fetcher.get_bars(
+                    sym, self.config.timeframe, start=start, end=end
+                )
+            except Exception as e:
+                self.alerter.error(f"Cross-asset fetch failed for {sym}: {e}")
+                cross_assets[sym] = pd.DataFrame()
+
         for sym in self.config.universe:
             self.strategies.setdefault(
                 sym,
@@ -157,9 +172,7 @@ class PaperTrader:
                 ),
             )
             try:
-                df = self.fetcher.get_bars(
-                    sym, self.config.timeframe, start=start, end=end
-                )
+                df = cross_assets.get(sym, pd.DataFrame())
                 if df.empty or len(df) < 250:
                     self.alerter.warn(
                         f"Skip {sym}: insufficient training data ({len(df)} bars)"
@@ -168,10 +181,15 @@ class PaperTrader:
                 model = EnsembleModel(
                     confidence_threshold=self.config.confidence_threshold,
                     seed=self.config.seed,
-                ).fit(df, symbol=sym)
+                ).fit(df, symbol=sym, cross_assets=cross_assets)
                 self.models[sym] = model
-                if not df.empty:
-                    self.last_seen_bar[sym] = df.index[-1]
+                # Stash so step() can rebuild features with the same
+                # cross-asset context used at training time.
+                self._cross_assets = cross_assets
+                # Intentionally don't seed last_seen_bar here: we want the
+                # first step() after warmup to score the latest bar as if
+                # it were new, so the loop emits at least one signal even
+                # when no fresh bar has printed since startup.
                 self.alerter.signal(f"Model trained for {sym} ({len(df)} bars)")
             except Exception as e:
                 self.alerter.error(f"Training failed for {sym}: {e}")
@@ -180,7 +198,7 @@ class PaperTrader:
     def step(self) -> None:
         """Single iteration: poll bars, score, decide, log."""
         end = datetime.now(timezone.utc)
-        start = end - timedelta(days=120)
+        start = end - timedelta(days=self.config.step_lookback_days)
         mark: Dict[str, float] = {}
 
         for sym in self.config.universe:
@@ -192,7 +210,8 @@ class PaperTrader:
             if df.empty:
                 continue
 
-            feat = self.feat_engine.transform(df)
+            cross = getattr(self, "_cross_assets", None) or {}
+            feat = FeatureEngine(cross_assets=cross).transform(df)
             if feat.empty:
                 continue
             latest_ts = feat.index[-1]

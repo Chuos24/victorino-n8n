@@ -19,6 +19,10 @@ class SignalResult:
     confidence: float
     lgbm_score: float
     lstm_pred: float
+    # LGBM's probability margin (top class − runner-up). Used as the
+    # LSTM/LGBM "agreement score delta" — when it's near zero the model
+    # is split across classes and the directional call is fragile.
+    agreement_delta: float = 0.0
 
 
 class EnsembleModel:
@@ -41,11 +45,17 @@ class EnsembleModel:
         self.lstm = LSTMRegressor(seed=seed)
         self._symbol: str | None = None
 
-    def fit(self, df: pd.DataFrame, symbol: str = "UNKNOWN") -> "EnsembleModel":
+    def fit(
+        self,
+        df: pd.DataFrame,
+        symbol: str = "UNKNOWN",
+        cross_assets: dict[str, pd.DataFrame] | None = None,
+    ) -> "EnsembleModel":
         self._symbol = symbol
-        self.lgbm.fit(df)
+        self._cross_assets = cross_assets or {}
+        self.lgbm.fit(df, symbol=symbol, cross_assets=self._cross_assets)
         try:
-            self.lstm.fit(df)
+            self.lstm.fit(df, cross_assets=self._cross_assets)
         except Exception:
             # If torch is missing the LSTM falls through to a tiny linear
             # fallback; if that also fails (e.g. very small datasets) just
@@ -69,4 +79,5 @@ class EnsembleModel:
             confidence=lgbm_pred.confidence,
             lgbm_score=float(lgbm_pred.confidence) * lgbm_pred.direction,
             lstm_pred=lstm_val,
+            agreement_delta=float(lgbm_pred.margin),
         )

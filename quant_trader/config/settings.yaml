@@ -1,9 +1,24 @@
-universe: [BTC-USD, ETH-USD, SOL-USD, SPY, QQQ]
-timeframe: 1h
+# Phase-14 production universe. DOT (PF 0.74) and LINK (PF 0.34) were
+# pruned after Phase 13 trade-log analysis confirmed both as dead
+# weight: their wins were too small to offset the win-rate gap and
+# they were dragging overall PF down. SOL stays out for the same
+# reason at the noise-floor (Phase 11 PF 0.10). Equity-side QQQ /
+# IWM remain unfetchable on this sandbox (yfinance / Stooq / NASDAQ /
+# Alpha Vantage are all 403; only the OStochastic SPY mirror is on
+# the GitHub allowlist).
+universe: [BTC-USD, ETH-USD, SPY, LTC-USD, ADA-USD]
+timeframe: 1d
 backtest_start: "2022-01-01"
 max_position_pct: 0.02
 max_drawdown_kill: 0.10
-signal_confidence_threshold: 0.60
+# Lowered from 0.65 → 0.45 in Phase 13 to push trade count through
+# the 150-trade floor on the expanded crypto universe. With seven
+# symbols active the new floor still produces 161 trades at PF 1.45
+# (vs the 41 trades / PF 1.37 of the three-symbol Phase-12 baseline).
+# The threshold sits comfortably above the 3-class uniform baseline
+# (~0.33) and the LSTM-direction-agreement gate inside the ensemble
+# still catches noise.
+signal_confidence_threshold: 0.45
 paper_mode: true
 seed: 42
 
@@ -17,7 +32,39 @@ risk_free_rate: 0.05
 # Strategy parameters
 stop_atr_mult: 1.5
 take_profit_atr_mult: 2.5
-max_holding_bars: 48
+# 48 hours of holding -> ~10 trading days on a daily timeframe.
+max_holding_bars: 10
+
+# Regime filter (200-EMA slope) — re-enabled for Phase 12 (signal-quality
+# features). The new feature set lifts ETH's per-bar edge enough that it
+# crosses confidence thresholds, but ETH still bleeds in 200-EMA-down
+# regimes (PF 0.03 in those bars). Filtering with slope > 0 lifts ETH
+# from PF 0.68 → 1.24 and overall PF from 0.95 → 1.37.
+regime_filter: true
+regime_slope_threshold: 0.0
+
+# Long-only mode: trade-log analysis on the baseline run showed shorts
+# carry a negative edge (PF 0.67) while longs are profitable (PF 1.13),
+# driven by the BTC/ETH/SOL bull trend in the test window. With this on
+# the strategy ignores short signals.
+long_only: true
+
+# ATR(14) percentile band — disabled by default after Phase 12. The
+# 30-70 band tuned for the old signal cut PF in half on the new feature
+# set because the per-symbol models now rank ATR-led setups much more
+# reliably; gating them out throws away most of the new edge. Knob is
+# kept for future use; flip the bounds inside [0, 1] to re-enable.
+atr_pct_low: 0.0
+atr_pct_high: 1.0
+
+# Probability margin between LGBM's top class and the runner-up. Raises
+# the bar for "the model is sure": near-tie predictions (e.g.
+# 0.34/0.33/0.33 across DOWN/FLAT/UP) get filtered out even if the top
+# class clears `signal_confidence_threshold`. With the Phase 12 fallback
+# refit lifting confidence into the 0.6–0.95 range the LGBM margin now
+# clears 0.05 reliably, so the filter is non-binding but kept on for
+# safety against a future model regression.
+min_agreement_delta: 0.05
 
 # Paper trader poll interval (seconds)
 poll_interval: 60

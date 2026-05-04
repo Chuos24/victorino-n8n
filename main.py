@@ -55,6 +55,12 @@ def cmd_backtest(settings: dict) -> int:
         take_profit_atr_mult=settings.get("take_profit_atr_mult", 2.5),
         max_holding_bars=settings.get("max_holding_bars", 48),
         seed=settings.get("seed", 42),
+        regime_filter=settings.get("regime_filter", False),
+        regime_slope_threshold=settings.get("regime_slope_threshold", 0.0),
+        long_only=settings.get("long_only", False),
+        atr_pct_low=settings.get("atr_pct_low", 0.0),
+        atr_pct_high=settings.get("atr_pct_high", 1.0),
+        min_agreement_delta=settings.get("min_agreement_delta", 0.0),
     )
     summary = bt.run(data)
     metrics = compute_metrics(
@@ -63,13 +69,19 @@ def cmd_backtest(settings: dict) -> int:
         timeframe=settings["timeframe"],
     )
     render_metrics_table(metrics)
-    out = Path(__file__).parent / "quant_trader" / "backtest" / "results" / "latest_run.json"
-    save_results(summary, metrics, out)
-    print(f"\nResults saved to {out}")
+    # Mirror the canonical results into both the package path (kept for
+    # backwards compatibility with the dashboard) and a top-level
+    # `backtest/results/latest_run.json` path so the trade log can be analysed
+    # without rooting around in the package tree.
+    pkg_out = Path(__file__).parent / "quant_trader" / "backtest" / "results" / "latest_run.json"
+    save_results(summary, metrics, pkg_out)
+    top_out = Path(__file__).parent / "backtest" / "results" / "latest_run.json"
+    save_results(summary, metrics, top_out)
+    print(f"\nResults saved to {pkg_out}\n              and {top_out}")
     return 0
 
 
-def cmd_paper(settings: dict) -> int:
+def cmd_paper(settings: dict, once: bool = False) -> int:
     from quant_trader.execution.paper_trader import PaperTrader, TraderConfig
 
     cfg = TraderConfig(
@@ -85,10 +97,28 @@ def cmd_paper(settings: dict) -> int:
         confidence_threshold=settings.get("signal_confidence_threshold", 0.6),
         stop_atr_mult=settings.get("stop_atr_mult", 1.5),
         take_profit_atr_mult=settings.get("take_profit_atr_mult", 2.5),
-        max_holding_bars=settings.get("max_holding_bars", 48),
+        max_holding_bars=settings.get("max_holding_bars", 10),
         seed=settings.get("seed", 42),
     )
     trader = PaperTrader(cfg)
+    if once:
+        trader.alerter.signal("Paper trader (one-shot) starting up.")
+        trader.warmup()
+        trader.step()
+        trader.save_state()
+        signals = [s for s in trader.signal_history if s.direction != 0]
+        print(
+            f"\nOne-shot complete. Bars seen: {sum(trader.bar_counters.values())}, "
+            f"non-zero signals: {len(signals)}, "
+            f"open positions: {len(trader.risk.state.positions)}, "
+            f"equity=${trader.risk.state.equity:,.2f}"
+        )
+        for s in signals[:10]:
+            print(
+                f"  {s.symbol}: dir={s.direction:+d} conf={s.confidence:.3f} "
+                f"lstm={s.lstm_pred:+.4f}"
+            )
+        return 0
     trader.run_forever()
     return 0
 
@@ -106,6 +136,11 @@ def main() -> int:
         default=None,
         help="Override path to settings.yaml",
     )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="For paper mode: warm up, run a single step, then exit.",
+    )
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -117,7 +152,7 @@ def main() -> int:
     if args.mode == "backtest":
         return cmd_backtest(settings)
     if args.mode == "paper":
-        return cmd_paper(settings)
+        return cmd_paper(settings, once=args.once)
     return 1
 
 

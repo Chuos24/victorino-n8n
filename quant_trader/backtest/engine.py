@@ -29,6 +29,11 @@ class Trade:
     pnl: float
     return_pct: float
     reason: str
+    entry_confidence: float = 0.0
+    entry_regime_slope: float = 0.0
+    entry_atr_pct: float = 0.0
+    entry_agreement_delta: float = 0.0
+    bars_held: int = 0
 
 
 class Backtester:
@@ -48,6 +53,12 @@ class Backtester:
         max_holding_bars: int = 48,
         seed: int = 42,
         train_fraction: float = 0.5,
+        regime_filter: bool = False,
+        regime_slope_threshold: float = 0.0,
+        long_only: bool = False,
+        atr_pct_low: float = 0.0,
+        atr_pct_high: float = 1.0,
+        min_agreement_delta: float = 0.0,
     ):
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
@@ -61,6 +72,16 @@ class Backtester:
         self.max_holding_bars = max_holding_bars
         self.seed = seed
         self.train_fraction = train_fraction
+        self.regime_filter = regime_filter
+        self.regime_slope_threshold = regime_slope_threshold
+        self.long_only = long_only
+        self.atr_pct_low = atr_pct_low
+        self.atr_pct_high = atr_pct_high
+        self.min_agreement_delta = min_agreement_delta
+
+        # Per-open-position metadata so closes can fill entry_time / confidence
+        # without scanning history.
+        self._open_meta: Dict[str, dict] = {}
 
         self.risk = RiskManager(
             initial_capital=initial_capital,
@@ -71,11 +92,14 @@ class Backtester:
         self.sizer = KellyPositionSizer(max_position_pct=max_position_pct)
 
         self.equity_curve: list[tuple[pd.Timestamp, float]] = []
+        self.invested_curve: list[tuple[pd.Timestamp, int]] = []
         self.trades: list[Trade] = []
         self.signals: list[SignalResult] = []
 
     def _train_models(
-        self, data: Dict[str, pd.DataFrame]
+        self,
+        data: Dict[str, pd.DataFrame],
+        cross_assets: Dict[str, pd.DataFrame] | None = None,
     ) -> Dict[str, EnsembleModel]:
         models: Dict[str, EnsembleModel] = {}
         for sym, df in data.items():
@@ -84,11 +108,20 @@ class Backtester:
                 continue
             split = max(1, int(len(df) * self.train_fraction))
             train = df.iloc[:split]
+            # Cross-asset frames are also sliced to the in-sample window so
+            # nothing leaks from the test period during training.
+            train_cross = None
+            if cross_assets is not None:
+                train_cross = {
+                    s: cdf.loc[: train.index[-1]]
+                    for s, cdf in cross_assets.items()
+                    if cdf is not None and not cdf.empty
+                }
             try:
                 model = EnsembleModel(
                     confidence_threshold=self.confidence_threshold,
                     seed=self.seed,
-                ).fit(train, symbol=sym)
+                ).fit(train, symbol=sym, cross_assets=train_cross)
                 models[sym] = model
             except Exception as e:
                 logger.warning("Failed to train ensemble for %s: %s", sym, e)
@@ -117,13 +150,17 @@ class Backtester:
 
     def run(self, data: Dict[str, pd.DataFrame]) -> dict:
         """Run a backtest across the given symbol -> OHLCV mapping."""
+        # Cross-asset context (BTC closes) is shared by every per-symbol
+        # FeatureEngine so cross-asset momentum is visible to all symbols.
+        cross_assets = {sym: df for sym, df in data.items() if df is not None and not df.empty}
+
         # 1. Train ensemble models on the in-sample slice.
-        models = self._train_models(data)
+        models = self._train_models(data, cross_assets=cross_assets)
         if not models:
             logger.warning("No models trained — backtest will be a no-op.")
 
         # 2. Pre-compute features for the *full* dataset for each symbol.
-        feat_engine = FeatureEngine()
+        feat_engine = FeatureEngine(cross_assets=cross_assets)
         feature_frames: Dict[str, pd.DataFrame] = {}
         for sym, df in data.items():
             if df is None or df.empty:
@@ -138,6 +175,12 @@ class Backtester:
                 take_profit_atr_mult=self.take_profit_atr_mult,
                 max_holding_bars=self.max_holding_bars,
                 confidence_threshold=self.confidence_threshold,
+                regime_filter=self.regime_filter,
+                regime_slope_threshold=self.regime_slope_threshold,
+                long_only=self.long_only,
+                atr_pct_low=self.atr_pct_low,
+                atr_pct_high=self.atr_pct_high,
+                min_agreement_delta=self.min_agreement_delta,
             )
             for sym in data
         }
@@ -157,6 +200,7 @@ class Backtester:
             # Mark-to-market and equity update.
             equity = self.risk.update_equity(mark)
             self.equity_curve.append((ts, equity))
+            self.invested_curve.append((ts, len(self.risk.state.positions)))
 
             for sym, feat_df in feature_frames.items():
                 if ts not in feat_df.index:
@@ -164,6 +208,9 @@ class Backtester:
                 row = feat_df.loc[ts]
                 price = float(row["close"])
                 atr = float(row.get("atr_14", 0.0))
+                regime_slope = float(row.get("ema_200_slope", 0.0))
+                atr_pct_raw = row.get("atr_pct_252", float("nan"))
+                atr_pct = float(atr_pct_raw) if pd.notna(atr_pct_raw) else None
                 bar_counters[sym] += 1
                 bar_idx = bar_counters[sym]
 
@@ -183,11 +230,18 @@ class Backtester:
                 self.signals.append(signal)
 
                 strat = strategies[sym]
-                decision = strat.on_bar(signal, bar_idx, price, atr)
+                decision = strat.on_bar(
+                    signal,
+                    bar_idx,
+                    price,
+                    atr,
+                    regime_slope=regime_slope,
+                    atr_pct=atr_pct,
+                )
 
                 if decision.action == StrategyAction.CLOSE and strat.position:
                     self._close_trade(
-                        sym, ts, price, decision.reason, strat
+                        sym, ts, price, decision.reason, strat, bar_idx
                     )
                 elif decision.action in (
                     StrategyAction.OPEN_LONG,
@@ -228,7 +282,14 @@ class Backtester:
                         bar_index=bar_idx,
                         size=risk_decision.units,
                     )
-                    self._open_trade_log = (sym, ts, price, direction, risk_decision.units)
+                    self._open_meta[sym] = {
+                        "entry_ts": ts,
+                        "entry_bar": bar_idx,
+                        "entry_confidence": float(signal.confidence),
+                        "entry_regime_slope": float(regime_slope),
+                        "entry_atr_pct": float(atr_pct) if atr_pct is not None else 0.0,
+                        "entry_agreement_delta": float(signal.agreement_delta),
+                    }
 
         # Close any positions still open at end of test.
         if self.equity_curve:
@@ -237,7 +298,14 @@ class Backtester:
                 if strat.position is None:
                     continue
                 last_price = mark.get(sym) or strat.position.entry_price
-                self._close_trade(sym, last_ts, last_price, "eod_flatten", strat)
+                self._close_trade(
+                    sym,
+                    last_ts,
+                    last_price,
+                    "eod_flatten",
+                    strat,
+                    bar_counters.get(sym, 0),
+                )
             # Final equity refresh.
             self.risk.update_equity(mark)
             self.equity_curve[-1] = (last_ts, self.risk.state.equity)
@@ -251,6 +319,7 @@ class Backtester:
         price: float,
         reason: str,
         strategy: MomentumMeanReversion,
+        close_bar: int,
     ) -> None:
         risk_pos = self.risk.state.positions.get(symbol)
         if risk_pos is None:
@@ -258,7 +327,6 @@ class Backtester:
         entry_price = risk_pos.entry_price
         units = risk_pos.units
         direction = risk_pos.direction
-        entry_bar = risk_pos.entry_bar
         pos, pnl = self.risk.close_position(
             symbol=symbol,
             price=price,
@@ -270,12 +338,14 @@ class Backtester:
             if entry_price > 0
             else 0.0
         )
-        # Lookup entry timestamp from prior trades; we approximate with ts - bars.
-        entry_ts = ts  # Pre-fill — better is to thread through; keep simple.
-        # Try to recover from strategy
-        strat_pos = strategy.position
-        if strat_pos is not None:
-            entry_bar = strat_pos.entry_bar
+        meta = self._open_meta.pop(symbol, {})
+        entry_ts = meta.get("entry_ts", ts)
+        entry_bar_meta = int(meta.get("entry_bar", risk_pos.entry_bar))
+        entry_conf = meta.get("entry_confidence", 0.0)
+        entry_slope = meta.get("entry_regime_slope", 0.0)
+        entry_atr_pct = meta.get("entry_atr_pct", 0.0)
+        entry_agreement = meta.get("entry_agreement_delta", 0.0)
+        bars_held = max(0, int(close_bar) - entry_bar_meta)
         strategy.close_position()
         self.trades.append(
             Trade(
@@ -289,6 +359,11 @@ class Backtester:
                 pnl=float(pnl),
                 return_pct=float(ret_pct),
                 reason=reason,
+                entry_confidence=float(entry_conf),
+                entry_regime_slope=float(entry_slope),
+                entry_atr_pct=float(entry_atr_pct),
+                entry_agreement_delta=float(entry_agreement),
+                bars_held=int(bars_held),
             )
         )
 
@@ -296,8 +371,12 @@ class Backtester:
         eq_df = pd.DataFrame(self.equity_curve, columns=["ts", "equity"]).set_index(
             "ts"
         )
+        inv_df = pd.DataFrame(
+            self.invested_curve, columns=["ts", "open_positions"]
+        ).set_index("ts")
         return {
             "equity_curve": eq_df,
+            "invested_curve": inv_df,
             "trades": [asdict(t) for t in self.trades],
             "final_equity": float(eq_df["equity"].iloc[-1]) if not eq_df.empty else self.initial_capital,
             "initial_capital": self.initial_capital,

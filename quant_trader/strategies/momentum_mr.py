@@ -51,12 +51,24 @@ class MomentumMeanReversion:
         take_profit_atr_mult: float = 2.5,
         max_holding_bars: int = 48,
         confidence_threshold: float = 0.6,
+        regime_filter: bool = False,
+        regime_slope_threshold: float = 0.0,
+        long_only: bool = False,
+        atr_pct_low: float = 0.0,
+        atr_pct_high: float = 1.0,
+        min_agreement_delta: float = 0.0,
     ):
         self.symbol = symbol
         self.stop_atr_mult = stop_atr_mult
         self.take_profit_atr_mult = take_profit_atr_mult
         self.max_holding_bars = max_holding_bars
         self.confidence_threshold = confidence_threshold
+        self.regime_filter = regime_filter
+        self.regime_slope_threshold = regime_slope_threshold
+        self.long_only = long_only
+        self.atr_pct_low = atr_pct_low
+        self.atr_pct_high = atr_pct_high
+        self.min_agreement_delta = min_agreement_delta
         self.position: Position | None = None
 
     def stop_price(self) -> float | None:
@@ -77,6 +89,8 @@ class MomentumMeanReversion:
         bar_index: int,
         price: float,
         atr: float,
+        regime_slope: float | None = None,
+        atr_pct: float | None = None,
     ) -> StrategyDecision:
         # If position is open, check exits first.
         if self.position is not None:
@@ -108,6 +122,30 @@ class MomentumMeanReversion:
             return StrategyDecision(StrategyAction.HOLD, "no_signal")
         if atr <= 0:
             return StrategyDecision(StrategyAction.HOLD, "no_atr")
+        # Regime filter: only take trades when 200-EMA slope is above the
+        # threshold (i.e. trending up). Sideways/down regimes are skipped.
+        if self.regime_filter and regime_slope is not None:
+            if regime_slope <= self.regime_slope_threshold:
+                return StrategyDecision(StrategyAction.HOLD, "regime_block")
+        # Long-only override: trade-log analysis showed shorts have negative
+        # expectancy (PF 0.67) while longs are profitable (PF 1.13). When
+        # `long_only` is set, drop short signals entirely.
+        if self.long_only and signal.direction == -1:
+            return StrategyDecision(StrategyAction.HOLD, "long_only_block")
+        # ATR percentile filter: only enter when current ATR sits inside the
+        # configured percentile band of its trailing 252-bar range. Very
+        # low ATR is chop / whipsaw territory; very high ATR signals regime
+        # breaks where momentum signals tend to misfire.
+        if atr_pct is not None and (
+            self.atr_pct_low > 0.0 or self.atr_pct_high < 1.0
+        ):
+            if atr_pct < self.atr_pct_low or atr_pct > self.atr_pct_high:
+                return StrategyDecision(StrategyAction.HOLD, "atr_band_block")
+        # Agreement delta: require LGBM's top-class probability to lead the
+        # runner-up by at least `min_agreement_delta`. Near-tie predictions
+        # (e.g. 0.34/0.33/0.33 across UP/FLAT/DOWN) get filtered out.
+        if signal.agreement_delta < self.min_agreement_delta:
+            return StrategyDecision(StrategyAction.HOLD, "low_agreement")
         action = (
             StrategyAction.OPEN_LONG if signal.direction == 1 else StrategyAction.OPEN_SHORT
         )

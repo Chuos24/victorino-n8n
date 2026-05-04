@@ -1,0 +1,60 @@
+{
+  "config": {
+    "universe": [
+      "BTC-USD",
+      "ETH-USD"
+    ],
+    "timeframe": "4h",
+    "initial_capital": 1000.0,
+    "max_holding_bars": 60,
+    "synth_method": "volumespread (daily \u2192 6\u00d7 4h, OHLC envelope preserved, vol/6 per sub-bar)",
+    "signal_confidence_threshold": 0.45,
+    "regime_filter": true,
+    "long_only": true,
+    "max_drawdown_kill": 0.1
+  },
+  "results": [
+    {
+      "max_position_pct": 0.05,
+      "initial_capital": 1000.0,
+      "n_trades": 85,
+      "win_rate": 0.8823529411764706,
+      "profit_factor": 14.650178833974255,
+      "total_return": 0.1422033163357963,
+      "max_drawdown": -0.0036525584078503925,
+      "max_drawdown_duration_days": 145.66666666666666,
+      "final_equity": 1142.2033163357962,
+      "sharpe_tw_rf0": 8.960929345786887,
+      "invested_periods": 966,
+      "total_periods": 4749
+    },
+    {
+      "max_position_pct": 0.1,
+      "initial_capital": 1000.0,
+      "n_trades": 85,
+      "win_rate": 0.8823529411764706,
+      "profit_factor": 14.562899668252815,
+      "total_return": 0.3036614614615707,
+      "max_drawdown": -0.007293600741754447,
+      "max_drawdown_duration_days": 145.66666666666666,
+      "final_equity": 1303.6614614615708,
+      "sharpe_tw_rf0": 8.960191122928146,
+      "invested_periods": 966,
+      "total_periods": 4749
+    },
+    {
+      "max_position_pct": 0.2,
+      "initial_capital": 1000.0,
+      "n_trades": 85,
+      "win_rate": 0.8823529411764706,
+      "profit_factor": 14.393875405480353,
+      "total_return": 0.6947821347212813,
+      "max_drawdown": -0.014541254938380654,
+      "max_drawdown_duration_days": 145.66666666666666,
+      "final_equity": 1694.7821347212812,
+      "sharpe_tw_rf0": 8.960677397219492,
+      "invested_periods": 966,
+      "total_periods": 4749
+    }
+  ]
+}

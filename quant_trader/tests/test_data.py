@@ -1,4 +1,10 @@
-"""Tests for the data layer (mocked — no network)."""
+"""Tests for the data layer.
+
+Most tests are mocked, but ``test_github_fallback_real_network`` does a real
+HTTPS fetch against ``raw.githubusercontent.com`` so we have at least one
+end-to-end check that the live-data path works. It is auto-skipped when the
+network is unavailable.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from quant_trader.data.fetcher import DataFetcher
 
@@ -58,3 +65,31 @@ def test_cache_round_trip(tmp_path: Path, monkeypatch):
 
     cache_file = tmp_path / "FAKE_1h.parquet"
     assert cache_file.exists()
+
+
+def _have_network(host: str = "raw.githubusercontent.com") -> bool:
+    import socket
+
+    try:
+        socket.create_connection((host, 443), timeout=3).close()
+        return True
+    except OSError:
+        return False
+
+
+@pytest.mark.parametrize("symbol", ["BTC-USD", "SPY"])
+def test_github_fallback_real_network(tmp_path: Path, symbol: str):
+    """Hit the real GitHub mirrors and verify we get a valid OHLCV frame."""
+    if not _have_network():
+        pytest.skip("no network access to raw.githubusercontent.com")
+    fetcher = DataFetcher(cache_dir=tmp_path)
+    df = fetcher._fetch_github_csv(
+        symbol,
+        "1d",
+        datetime(2023, 1, 1, tzinfo=timezone.utc),
+        datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    assert not df.empty, f"GitHub fallback returned empty frame for {symbol}"
+    assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+    assert (df["high"] >= df["low"]).all()
+    assert (df["close"] > 0).all()
